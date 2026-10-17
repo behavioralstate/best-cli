@@ -181,7 +181,7 @@ pub struct EventsArgs {
     #[arg(long)]
     pub to: Option<String>,
 
-    /// At most this many events: one page of history, or when to stop following.
+    /// At most this many events: one page of history, or how many --follow shows before it stops.
     #[arg(long)]
     pub limit: Option<u32>,
 
@@ -189,11 +189,12 @@ pub struct EventsArgs {
     #[arg(long)]
     pub after: Option<String>,
 
-    /// Follow the live stream instead of reading the history: one line per event until Ctrl-C (or --limit).
+    /// What happened, then what happens next: the history, then the live stream, one line per event until Ctrl-C
+    /// (or --limit events in all).
     #[arg(long, short = 'f')]
     pub follow: bool,
 
-    /// Resume a stream after this event id (sent as Last-Event-ID). With --follow.
+    /// Resume the stream after this event id (sent as Last-Event-ID), skipping the history. With --follow.
     #[arg(long, requires = "follow", value_name = "ID")]
     pub last_event_id: Option<String>,
 }

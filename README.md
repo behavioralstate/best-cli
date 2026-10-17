@@ -68,7 +68,7 @@ best workflows dotquant                # the service's published recipes
 best query dotquant list-brokers       # a table for a list, JSON otherwise
 best query dotquant get-broker-cash --param brokerId=0735cfd1-…
 best events dotquant --limit 20        # the event log
-best events dotquant --follow --type OrderFilled   # the live stream, one line per event
+best events dotquant --follow --type OrderFilled   # what happened, then what happens next, one line per event
 ```
 
 **4. Send a command.** The envelope is built from the catalogue (`type`, `dataschema`), the payload is yours:

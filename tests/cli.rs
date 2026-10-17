@@ -695,6 +695,44 @@ async fn events_are_read_as_a_table_and_followed_as_lines() {
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0]["id"], "ev2");
     assert_eq!(lines[1]["id"], "ev3");
+
+    // Without --last-event-id, what happened comes first (the history, ev1 and ev2), then the stream after the last
+    // of it: ev2 is replayed by the service and not shown twice, ev3 is new.
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events")))
+        .and(query_param("type", "OrderFilled"))
+        .and(query_param("limit", "3"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"events": [
+            {"id": "ev1", "type": "OrderFilled", "correlationid": "c1", "time": "t1", "data": {}},
+            {"id": "ev2", "type": "OrderFilled", "correlationid": "c1", "time": "t2", "data": {"qty": 1}}
+        ]})))
+        .mount(&rig.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events/stream")))
+        .and(query_param("type", "OrderFilled"))
+        .and(header("Last-Event-ID", "ev2"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "text/event-stream")
+                .set_body_string("id: ev2\ndata: {\"id\":\"ev2\",\"type\":\"OrderFilled\"}\n\nid: ev3\ndata: {\"id\":\"ev3\",\"type\":\"OrderFilled\"}\n\n"),
+        )
+        .mount(&rig.server)
+        .await;
+    let out = rig
+        .run(&["events", NAME, "--follow", "--type", "OrderFilled", "--limit", "3"])
+        .await
+        .success();
+    let ids: Vec<String> = String::from_utf8_lossy(&out.get_output().stdout)
+        .lines()
+        .map(|l| {
+            serde_json::from_str::<Value>(l).unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(ids, ["ev1", "ev2", "ev3"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -788,6 +826,69 @@ async fn a_public_surface_is_signed_in_without_a_credential() {
     assert!(
         sent.iter().all(|r| r.headers.get("x-api-key").is_none()),
         "no credential header on a public surface"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_at_a_doors_root_opens_the_roots_services_and_heals_on_next_use() {
+    let rig = Rig::new().await;
+    let door = MockServer::start().await;
+    let base = door.uri();
+    Mock::given(method("GET"))
+        .and(path("/.well-known/best"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"best": {
+            "version": "0.9.17",
+            "authentication": {"type": "apiKey", "scheme": "X-Api-Key", "in": "header", "tokenUrl": format!("{base}/auth/token"), "deviceAuthorizationUrl": format!("{base}/auth/device"), "note": "x"},
+            "tenants": {"manifest": format!("{base}/.well-known/best/{{tenantId}}")},
+            "services": {"io.best.agents": {"version": "1.0.0", "description": "The door", "http": {"endpoint": format!("{base}/")}}},
+            "capabilities": []
+        }})))
+        .mount(&door)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/auth/device"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"device_code": "d", "user_code": "AAAA-BBBB", "verification_uri": format!("{base}/activate"), "expires_in": 60, "interval": 1})))
+        .mount(&door)
+        .await;
+    // As best-peer answers for a credential at its root: tenant_id is the door's host, which names no workspace.
+    let host = base.trim_start_matches("http://").to_owned();
+    Mock::given(method("POST"))
+        .and(path("/auth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token": KEY, "token_type": "apikey", "auth_header": "X-Api-Key", "tenant_id": host, "name": "door", "endpoint": format!("{base}/")})))
+        .mount(&door)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/queries"))
+        .and(header("X-Api-Key", KEY))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"queries": [{"schema": "get-hardware-state", "version": "1.0", "dataschema": format!("{base}/queries/get-hardware-state/1.0")}]})))
+        .mount(&door)
+        .await;
+
+    rig.run(&["login", "door", "--manifest", &base]).await.success();
+    assert_eq!(
+        rig.credentials()["door"]["endpoints"],
+        json!({"io.best.agents": base.trim_end_matches('/')})
+    );
+    assert!(
+        door.received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| !r.url.path().starts_with("/.well-known/best/")),
+        "no tenant manifest was asked for"
+    );
+
+    // A sign-in that stored the credential but not the endpoints completes on its next use.
+    let mut all = rig.credentials();
+    all["door"]["endpoints"] = json!({});
+    std::fs::write(rig.credentials_file(), serde_json::to_string_pretty(&all).unwrap()).unwrap();
+    rig.run(&["queries", "door"])
+        .await
+        .success()
+        .stdout(predicate::str::contains("get-hardware-state"));
+    assert_eq!(
+        rig.credentials()["door"]["endpoints"],
+        json!({"io.best.agents": base.trim_end_matches('/')})
     );
 }
 

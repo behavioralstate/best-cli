@@ -187,6 +187,15 @@ async fn fetch_with(http: &Http, url: &Url, auth: &Auth) -> Result<Manifest> {
 /// The endpoints a sign-in opens, as best-mcp resolves them: the tenant manifest's services when the root is
 /// multi-tenant and the token answer named a tenant, else the root's; only those on the manifest's own host, where
 /// alone the credential may go (SPEC Name Resolution).
+/// A tenant id that can be a path segment, as best-mcp accepts one; anything else (a host with a port, as a door
+/// answers for a credential at its root) names no tenant manifest.
+fn is_tenant_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
 pub async fn endpoints_for(
     http: &Http,
     root: &Manifest,
@@ -195,7 +204,7 @@ pub async fn endpoints_for(
 ) -> Result<Vec<(String, String)>> {
     let host = root.host();
     let services = match (root.tenant_template(), tenant_id) {
-        (Some(template), Some(tenant)) => {
+        (Some(template), Some(tenant)) if is_tenant_id(tenant) => {
             let tenant_url = Url::parse(&template.replace("{tenantId}", &urlencode(tenant)))
                 .with_context(|| format!("tenants.manifest '{template}' does not expand to a URL"))?;
             if host_of(&tenant_url) != host {
@@ -262,6 +271,14 @@ mod tests {
             address("localhost:7175").unwrap().as_str(),
             "https://localhost:7175/.well-known/best"
         );
+    }
+
+    #[test]
+    fn a_tenant_id_is_a_path_segment() {
+        assert!(is_tenant_id("acme"));
+        assert!(is_tenant_id("be9e0176-d898-40a0-b558-eaa6f748b6aa"));
+        assert!(!is_tenant_id("127.0.0.1:7791"), "a door's host is not a tenant");
+        assert!(!is_tenant_id(""));
     }
 
     #[test]

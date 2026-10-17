@@ -58,22 +58,31 @@ pub async fn run(cli: Cli) -> Result<()> {
 
 // ── connections ──────────────────────────────────────────────────────────────
 
-/// `name`, or `name/<service id>` for a connection whose manifest names several services.
-fn connection(name: &str) -> Result<Connection> {
-    let store = Store::open()?;
+/// `name`, or `name/<service id>` for a connection whose manifest names several services. A sign-in whose
+/// endpoints could not be resolved at the end of the exchange completes here, on its next use: nobody approves
+/// again.
+async fn connection(ctx: &Ctx, name: &str) -> Result<Connection> {
+    let mut store = Store::open()?;
     let (bare, service) = match name.split_once('/') {
         Some((n, s)) if !s.is_empty() => (n, Some(s)),
         _ => (name, None),
     };
-    let Some(entry) = store.get(bare) else {
+    let Some(mut entry) = store.get(bare) else {
         bail!(NotSignedIn(format!(
             "no connection named '{bare}': `best connections` lists them, `best login {bare} --manifest <address>` signs in"
         )));
     };
     if entry.endpoints.is_empty() {
-        bail!(NotSignedIn(format!(
-            "'{bare}' holds a credential but no endpoint: sign in again with `best logout {bare}` then `best login {bare} --manifest <address>`"
-        )));
+        let Some(address) = entry.manifest.clone() else {
+            bail!(NotSignedIn(format!(
+                "'{bare}' holds a credential but no endpoint and no manifest: `best logout {bare}`, then sign in again"
+            )));
+        };
+        let root = manifest::resolve(&ctx.http, &address).await?;
+        entry.endpoints = manifest::endpoints_for(&ctx.http, &root, entry.tenant_id.as_deref(), &entry.auth)
+            .await
+            .with_context(|| format!("'{bare}' is signed in but its endpoints could not be resolved"))?;
+        store.insert(bare, &entry)?;
     }
     let (service, endpoint) = entry.endpoint(service)?;
     Ok(Connection {
@@ -224,7 +233,7 @@ async fn login(ctx: &Ctx, args: LoginArgs) -> Result<()> {
             store.insert(&name, &entry)?;
         }
         Err(e) => bail!(
-            "'{name}' is signed in (the credential is stored in {}) but its endpoints could not be resolved: {e:#}. Run `best logout {name}` and sign in again.",
+            "'{name}' is signed in (the credential is stored in {}) but its endpoints could not be resolved: {e:#}. The next `best queries {name}` tries again; nothing needs approving again.",
             store.path().display()
         ),
     }
@@ -284,7 +293,7 @@ fn logout(ctx: &Ctx, name: &str) -> Result<()> {
 // ── catalogues and schemas ───────────────────────────────────────────────────
 
 async fn list(ctx: &Ctx, name: &str, kind: Kind, filter: Option<&str>) -> Result<()> {
-    let c = connection(name)?;
+    let c = connection(ctx, name).await?;
     let entries = catalogue::fetch(&ctx.http, &c.endpoint, &c.auth, kind).await?;
     let shown: Vec<&CatalogueEntry> = entries.iter().filter(|e| catalogue::matches(e, filter)).collect();
     if ctx.json {
@@ -324,7 +333,7 @@ async fn list(ctx: &Ctx, name: &str, kind: Kind, filter: Option<&str>) -> Result
 }
 
 async fn schema(ctx: &Ctx, name: &str, wanted: &str, kind: Option<SchemaKind>) -> Result<()> {
-    let c = connection(name)?;
+    let c = connection(ctx, name).await?;
     let _ = ctx;
     let url = match kind {
         Some(SchemaKind::Event) => {
@@ -373,7 +382,7 @@ async fn catalogue_schema_url(ctx: &Ctx, c: &Connection, wanted: &str, kind: Kin
 // ── queries ──────────────────────────────────────────────────────────────────
 
 async fn query(ctx: &Ctx, name: &str, wanted: &str, params: &[String]) -> Result<()> {
-    let c = connection(name)?;
+    let c = connection(ctx, name).await?;
     let pairs = params
         .iter()
         .map(|p| {
@@ -400,7 +409,7 @@ async fn query(ctx: &Ctx, name: &str, wanted: &str, params: &[String]) -> Result
 // ── commands ─────────────────────────────────────────────────────────────────
 
 async fn send(ctx: &Ctx, args: SendArgs) -> Result<()> {
-    let c = connection(&args.name)?;
+    let c = connection(ctx, &args.name).await?;
     let data = payload(&args)?;
     let entries = catalogue::fetch(&ctx.http, &c.endpoint, &c.auth, Kind::Commands).await?;
     let entry = catalogue::find(&entries, &args.schema, Kind::Commands)?;
@@ -497,7 +506,7 @@ fn payload(args: &SendArgs) -> Result<Value> {
 // ── events ───────────────────────────────────────────────────────────────────
 
 async fn events(ctx: &Ctx, args: EventsArgs) -> Result<()> {
-    let c = connection(&args.name)?;
+    let c = connection(ctx, &args.name).await?;
     let mut pairs: Vec<(&str, String)> = Vec::new();
     if let Some(v) = &args.kind {
         pairs.push(("type", v.clone()));
@@ -561,8 +570,9 @@ fn event_row(event: &Value) -> Vec<String> {
     ]
 }
 
-/// The live stream, one line per event, reconnecting with `Last-Event-ID` when the service closes it, until
-/// Ctrl-C or `--limit` events.
+/// What happened, then what happens next (SPEC Events: load history first, then open the stream): the history page
+/// is printed, the stream is opened after its last event (`Last-Event-ID`) and reopened the same way when the service
+/// closes it, until Ctrl-C or `--limit` events in all. An id already shown is not shown again.
 async fn follow(
     ctx: &Ctx,
     c: &Connection,
@@ -570,14 +580,39 @@ async fn follow(
     limit: Option<u32>,
     last_event_id: Option<&str>,
 ) -> Result<()> {
+    let as_lines = ctx.json || !std::io::stdout().is_terminal();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut last_id = last_event_id.map(str::to_owned);
+    let mut shown: u32 = 0;
+    let done = |shown: u32| limit.is_some_and(|l| shown >= l);
+
+    if last_event_id.is_none() {
+        let mut history = join(&c.endpoint, "events")?;
+        history
+            .query_pairs_mut()
+            .extend_pairs(pairs.iter().map(|(k, v)| (*k, v.as_str())));
+        if let Some(l) = limit {
+            history.query_pairs_mut().append_pair("limit", &l.to_string());
+        }
+        let answer = ctx.http.get_json(&history, &c.auth).await?;
+        for event in answer["events"].as_array().into_iter().flatten() {
+            print_event(event, as_lines)?;
+            if let Some(id) = event["id"].as_str() {
+                seen.insert(id.to_owned());
+                last_id = Some(id.to_owned());
+            }
+            shown += 1;
+            if done(shown) {
+                return Ok(());
+            }
+        }
+    }
+
     let mut url = join(&c.endpoint, "events/stream")?;
     if !pairs.is_empty() {
         url.query_pairs_mut()
             .extend_pairs(pairs.iter().map(|(k, v)| (*k, v.as_str())));
     }
-    let as_lines = ctx.json || !std::io::stdout().is_terminal();
-    let mut last_id = last_event_id.map(str::to_owned);
-    let mut shown: u32 = 0;
     let mut first = true;
     loop {
         if !first {
@@ -587,7 +622,7 @@ async fn follow(
         let response = ctx.http.open_stream(&url, &c.auth, last_id.as_deref()).await?;
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
-        let closed = loop {
+        loop {
             let chunk = tokio::select! {
                 chunk = stream.next() => chunk,
                 _ = tokio::signal::ctrl_c() => return Ok(()),
@@ -596,27 +631,29 @@ async fn follow(
                 Some(Ok(bytes)) => buffer.push_str(&String::from_utf8_lossy(&bytes)),
                 Some(Err(e)) => {
                     say!("stream interrupted ({e}); reconnecting");
-                    break true;
+                    break;
                 }
-                None => break true,
+                None => break,
             }
             while let Some(frame_end) = buffer.find("\n\n") {
                 let frame = buffer[..frame_end].to_owned();
                 buffer.drain(..frame_end + 2);
                 let (id, data) = parse_frame(&frame);
-                if let Some(id) = id {
-                    last_id = Some(id);
-                }
                 let Some(data) = data else { continue };
-                print_event(&data, as_lines)?;
+                let event: Value = serde_json::from_str(&data).unwrap_or(Value::String(data.clone()));
+                let event_id = id.or_else(|| event["id"].as_str().map(str::to_owned));
+                if let Some(event_id) = &event_id {
+                    last_id = Some(event_id.clone());
+                    if !seen.insert(event_id.clone()) {
+                        continue;
+                    }
+                }
+                print_event(&event, as_lines)?;
                 shown += 1;
-                if limit.is_some_and(|l| shown >= l) {
+                if done(shown) {
                     return Ok(());
                 }
             }
-        };
-        if !closed {
-            return Ok(());
         }
     }
 }
@@ -639,12 +676,11 @@ fn parse_frame(frame: &str) -> (Option<String>, Option<String>) {
     (id, if data.is_empty() { None } else { Some(data.join("\n")) })
 }
 
-fn print_event(data: &str, as_lines: bool) -> Result<()> {
-    let event: Value = serde_json::from_str(data).unwrap_or(Value::String(data.to_owned()));
+fn print_event(event: &Value, as_lines: bool) -> Result<()> {
     if as_lines {
         println!("{event}");
     } else {
-        let row = event_row(&event);
+        let row = event_row(event);
         println!("{}  {}  {}  {}", row[0], row[1], row[2], row[4]);
     }
     Ok(())
@@ -653,7 +689,7 @@ fn print_event(data: &str, as_lines: bool) -> Result<()> {
 // ── workflows ────────────────────────────────────────────────────────────────
 
 async fn workflows(ctx: &Ctx, name: &str, id: Option<&str>) -> Result<()> {
-    let c = connection(name)?;
+    let c = connection(ctx, name).await?;
     match id {
         None => {
             let answer = ctx.http.get_json(&join(&c.endpoint, "workflows")?, &c.auth).await?;
