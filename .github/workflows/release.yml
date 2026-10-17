@@ -1,0 +1,213 @@
+name: release
+
+# A release is a tag `v<version>` on a commit of `main`, made by `scripts/release.sh`. The tag must say what
+# `Cargo.toml` says; the binaries must say it too. Four targets are built from the locked tree, archived with the
+# README and the licence, summed, attested (SLSA build provenance) and published with notes made from the release
+# commit's message and the commits since the previous release. Run by hand (workflow_dispatch) it builds and keeps the
+# archives as run artifacts without publishing anything: that is how a change to this file is tried.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The tag is honest before anything is built: on main, on the release commit, equal to the crate version, with ci
+  # green on that commit, and the tree green here too.
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: The version, from Cargo.toml; a pushed tag must match it, sit on main and be the release commit
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            tag="${GITHUB_REF#refs/tags/}"
+            if [[ "$tag" != "v$version" ]]; then
+              echo "::error::tag $tag does not match the crate version $version; release with scripts/release.sh"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::tag $tag is not on main"
+              exit 1
+            fi
+            subject=$(git log -1 --format=%s "$GITHUB_SHA")
+            if [[ "$subject" != "Release $version" ]]; then
+              echo "::error::tag $tag is on '$subject', not on the commit 'Release $version' that scripts/release.sh makes"
+              exit 1
+            fi
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: ci passed on this commit (the tag usually lands seconds after the push)
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            state=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --limit 1 --json status,conclusion --jq 'if length == 0 then "none" else .[0].status + "/" + .[0].conclusion end')
+            case "$state" in
+              completed/success) echo "ci: success"; exit 0 ;;
+              completed/*) echo "::error::ci on $GITHUB_SHA ended $state; nothing is released from a red commit"; exit 1 ;;
+              *) echo "ci on $GITHUB_SHA: $state; waiting"; sleep 30 ;;
+            esac
+          done
+          echo "::error::ci on $GITHUB_SHA did not finish in 30 minutes"
+          exit 1
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  build:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl, so the Linux binaries are static and run on any distribution.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
+    env:
+      # Each archive is published twice, byte for byte the same: under NAME, which carries the version, for pinning,
+      # and under ALIAS, which does not, so `releases/latest/download/<ALIAS>` is always the newest release and the
+      # install scripts never name a version. The folder inside is ALIAS, so `cd` needs no version either.
+      NAME: best-${{ needs.check.outputs.version }}-${{ matrix.target }}
+      ALIAS: best-${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: musl toolchain
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: The binary says the version the tag says
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=target/${{ matrix.target }}/release/best
+          [[ "${{ matrix.os }}" == windows-latest ]] && bin="$bin.exe"
+          said=$("$bin" --version)
+          [[ "$said" == "best ${{ needs.check.outputs.version }}" ]] || { echo "::error::the binary says '$said'"; exit 1; }
+      - name: Archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/$ALIAS"
+          cp README.md LICENSE "dist/$ALIAS/"
+          if [[ "${{ matrix.archive }}" == zip ]]; then
+            cp target/${{ matrix.target }}/release/best.exe "dist/$ALIAS/"
+            (cd dist && 7z a -tzip "$NAME.zip" "$ALIAS" > /dev/null)
+          else
+            cp target/${{ matrix.target }}/release/best "dist/$ALIAS/"
+            tar -C dist -czf "dist/$NAME.tar.gz" "$ALIAS"
+          fi
+          cp "dist/$NAME.${{ matrix.archive }}" "dist/$ALIAS.${{ matrix.archive }}"
+          rm -r "dist/$ALIAS"
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: |
+            dist/${{ env.NAME }}.${{ matrix.archive }}
+            dist/${{ env.ALIAS }}.${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    if: needs.check.outputs.publish == 'true'
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum best-* > SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/best-*
+      - name: Release notes, from the release commit's message and the commits since the previous release
+        id: notes
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${{ needs.check.outputs.version }}"
+          previous=$(git describe --tags --abbrev=0 --match 'v*' "$tag^" 2>/dev/null || true)
+          {
+            echo "# best $version"
+            echo
+            message=$(git log -1 --format=%b "$GITHUB_SHA" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
+            if [[ -n "$message" ]]; then echo "$message"; echo; fi
+            if [[ -n "$previous" ]]; then
+              echo "## Commits since $previous"
+              range="$previous..$tag"
+            else
+              echo "## Commits"
+              range="$tag"
+            fi
+            echo
+            git log --no-merges --format='- %s (%h)' "$range" | grep -v -E "^- Release $version \(" || true
+            echo
+            echo "## Install"
+            echo
+            echo '```bash'
+            echo 'curl -fsSL https://raw.githubusercontent.com/behavioralstate/best-cli/main/install.sh | sh'
+            echo '```'
+            echo
+            echo "Archives are published under their versioned name (for pinning) and under a name without the version, with \`SHA256SUMS\` and a build provenance attestation (\`gh attestation verify <archive> --repo $GITHUB_REPOSITORY\`)."
+          } > notes.md
+          cat notes.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF#refs/tags/}" dist/* --repo "$GITHUB_REPOSITORY" --title "best ${{ needs.check.outputs.version }}" --notes-file notes.md --verify-tag
