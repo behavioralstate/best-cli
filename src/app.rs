@@ -162,7 +162,13 @@ async fn login(ctx: &Ctx, args: LoginArgs) -> Result<()> {
     let root = manifest::resolve(&ctx.http, &args.manifest).await?;
     say!("Resolved {} to {}", args.manifest.trim(), root.url);
 
-    if root.is_public() && root.registration()?.is_none() {
+    if args.device_code.is_some() && root.token_url()?.is_none() {
+        bail!(
+            "{} declares no tokenUrl, so there is no endpoint to redeem a device code at. Sign in where its manifest says, or without --device-code if it declares a deviceAuthorizationUrl.",
+            root.host()
+        );
+    }
+    if args.device_code.is_none() && root.is_public() && root.registration()?.is_none() {
         let endpoints = manifest::endpoints_for(&ctx.http, &root, None, &Auth::None).await?;
         let entry = Entry {
             tenant_id: None,
@@ -177,14 +183,15 @@ async fn login(ctx: &Ctx, args: LoginArgs) -> Result<()> {
 
     let started = match &args.device_code {
         Some(code) => {
+            let literal = code != "-";
             let code = device_code(code)?;
             let Some(token_url) = root.token_url()? else {
-                bail!(
-                    "{} declares no tokenUrl, so there is no endpoint to redeem a device code at. Sign in where its manifest says, or without --device-code if it declares a deviceAuthorizationUrl.",
-                    root.host()
-                );
+                bail!("{} declares no tokenUrl", root.host());
             };
-            say!("Redeeming the device code at {token_url}…");
+            if literal {
+                say!("The device code is now in your shell history and this process's command line; next time use --device-code - and type or pipe it.");
+            }
+            say!("Redeeming the device code at {token_url}; waiting for the approval if it is not given yet (up to 15 minutes)…");
             signin::held(&token_url, code)
         }
         None => {

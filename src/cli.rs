@@ -119,7 +119,7 @@ pub struct LoginArgs {
 
     /// Redeem a device code you already hold (a registration started on another device, or at an authorization
     /// URL this machine cannot reach) at the manifest's token endpoint, instead of starting a sign-in. `-` reads
-    /// the code from stdin, so it stays out of the process list.
+    /// the code from stdin, which keeps it out of the shell history and the process list.
     #[arg(long, value_name = "CODE", conflicts_with = "label")]
     pub device_code: Option<String>,
 }

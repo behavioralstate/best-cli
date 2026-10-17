@@ -58,8 +58,8 @@ printed under the code exactly as the service wrote it, and nothing when it publ
 approving opens an account for you or admits you to a machine someone else runs.
 
 `best` never opens the link itself: approving is yours. A device code you already hold (a registration started on another device, or at an authorization URL this machine
-cannot reach) is redeemed with `best login <name> --manifest <address> --device-code <code>`, or `--device-code -` to
-read it from stdin; a service that declares no token endpoint is refused at once. A name that is already signed in is
+cannot reach) is redeemed with `best login <name> --manifest <address> --device-code -`, the code typed or piped on stdin
+(`--device-code <code>` works too, but leaves the code in your shell history and the process list); a service that declares no token endpoint is refused at once. A name that is already signed in is
 left as it is
 (`best logout <name>` forgets one). Plain `http://` is accepted only on this machine; `--ca-file <pem>` trusts a
 certificate the service's operator sent you (a best-peer makes its own).

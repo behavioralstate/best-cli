@@ -22,7 +22,7 @@ the record of the run that passed: how it was set up, what it showed, and the te
 
 ## What the run showed
 
-- The device flow end to end on best-peer: the code shown, approved at the machine, the credential stored under the
+- The device flow end to end on best-peer: the code shown with the door's own sign-in guidance as it wrote it, approved at the machine, the credential stored under the
   name given. The peer's token answer names the door's host as `tenant_id`, which is no workspace: the endpoints are
   the root manifest's, as best-mcp resolves them.
 - Both catalogues with their descriptions, a command's schema document, a query answered as a table and as JSON, a
@@ -48,15 +48,27 @@ Resolved http://127.0.0.1:7792 to http://127.0.0.1:7792/.well-known/best
 
 Open this link in your own browser, sign in and approve:
 
-    http://127.0.0.1:7792/auth/verify?user_code=2H9B-L62V
+    http://127.0.0.1:7792/auth/verify?user_code=6QVZ-832F
 
-The code is 2H9B-L62V. Waiting for your approval (the code expires in 10 minutes)…
+The code is 6QVZ-832F. Waiting for your approval (the code expires in 10 minutes)…
+
+The service's sign-in guidance, as it wrote it:
+
+For you, the agent, not the person: read this manifest with an HTTP request; never show it to them or open it in a browser. When the person asks you to sign them in, first name the connection: one word of lowercase letters, digits and hyphens, made from what they called this service (acme payroll dev becomes acme-payroll-dev; its host if they gave no name), and ask them to confirm it before you go on. Then POST a form to deviceAuthorizationUrl with client_id set to your software's name and connection set to that name, and give them the link it answers (verification_uri_complete, or verification_uri and user_code) to open in their own browser, where they sign in and approve you. Never open that link yourself or in a browser you control, never sign in for them, and never ask for a password. Then poll tokenUrl, no faster than interval. Its answer carries a secret credential and, in name, the connection's name: save the credential straight to your client's credential store or to a file only the person can read, under that name, and never put it in a message, a command or any output: read the rest of the answer without it.
+
+Give the person this link, verification_uri_complete (or verification_uri and user_code), to open in their own browser, where they sign in and approve you. Never open it yourself or in a browser you control: approving is theirs. Then poll tokenUrl no faster than interval, with a form of grant_type=urn:ietf:params:oauth:grant-type:device_code, device_code and client_id. Its answer carries a secret credential and, in name, the connection's name: save the credential straight to your client's credential store or to a file only the person can read, under that name, and never put it in a message, a command or any output: read the rest of the answer without it.
 
 [at the peer's machine]
-$ best-peer approve 2H9B-L62V
+$ best-peer approve 6QVZ-832F
 admitted best-cli on DESKTOP-N6MP7J2 (best-cli) as connection lab-peer with a durable credential that may all, no share set: the agent's next poll gets it
 
 [the login continued:]
+
+The service's sign-in guidance, as it wrote it:
+
+For you, the agent, not the person: read this manifest with an HTTP request; never show it to them or open it in a browser. When the person asks you to sign them in, first name the connection: one word of lowercase letters, digits and hyphens, made from what they called this service (acme payroll dev becomes acme-payroll-dev; its host if they gave no name), and ask them to confirm it before you go on. Then POST a form to deviceAuthorizationUrl with client_id set to your software's name and connection set to that name, and give them the link it answers (verification_uri_complete, or verification_uri and user_code) to open in their own browser, where they sign in and approve you. Never open that link yourself or in a browser you control, never sign in for them, and never ask for a password. Then poll tokenUrl, no faster than interval. Its answer carries a secret credential and, in name, the connection's name: save the credential straight to your client's credential store or to a file only the person can read, under that name, and never put it in a message, a command or any output: read the rest of the answer without it.
+
+Give the person this link, verification_uri_complete (or verification_uri and user_code), to open in their own browser, where they sign in and approve you. Never open it yourself or in a browser you control: approving is theirs. Then poll tokenUrl no faster than interval, with a form of grant_type=urn:ietf:params:oauth:grant-type:device_code, device_code and client_id. Its answer carries a secret credential and, in name, the connection's name: save the credential straight to your client's credential store or to a file only the person can read, under that name, and never put it in a message, a command or any output: read the rest of the answer without it.
 
 Signed in as 'lab-peer' (tenant 127.0.0.1:7792) at 127.0.0.1:7792; the credential is durable until revoked.
 The credential is in C:\Users\Riccardo\.best-mcp\credentials.json, where best-mcp finds it too. It is never printed.
@@ -150,9 +162,9 @@ $ best schema lab-peer deploy-model
 
 $ best query lab-peer get-hardware-state
 compute          id     memory                                               name                                     power_w  temperature_c  utilisation_pct  vendor
-[{"api":"cpu"}]  cpu-0  {"free_bytes":8833220608,"total_bytes":30886772736}  AMD Ryzen 9 6900HX with Radeon Graphics                          11               {"other":"host"}
+[{"api":"cpu"}]  cpu-0  {"free_bytes":6459207680,"total_bytes":30886772736}  AMD Ryzen 9 6900HX with Radeon Graphics                          12               {"other":"host"}
 driver: 
-observed_at: 2026-10-17T15:26:36.0631098Z
+observed_at: 2026-10-17T18:58:12.1324196Z
 
 $ best query lab-peer get-workloads
 {
@@ -167,16 +179,16 @@ Accepted DeployModel: id 33333333-4444-4555-8666-777777777777, correlation 33333
 Follow it with `best events lab-peer --correlation-id 33333333-4444-4555-8666-777777777777 --follow`.
 
 $ best events lab-peer --correlation-id 33333333-4444-4555-8666-777777777777 --follow --limit 6
-{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"image":"ollama/ollama","progress_pct":50},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulling/1.0","id":"f24598cf-59cf-4d9c-b651-d59d1e530fec","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T15:26:36.1527697Z","type":"ImagePulling"}
-{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"image":"ollama/ollama","progress_pct":100},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulling/1.0","id":"b079b1c2-0682-4d40-bb6b-8a6ee0ab3363","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T15:26:36.1528339Z","type":"ImagePulling"}
-{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"image":"ollama/ollama"},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulled/1.0","id":"fb7b08e5-2ecd-4b42-9129-5eb0eab0debd","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T15:26:36.1551588Z","type":"ImagePulled"}
-{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"container":"fake-1","deployment":"dep-763e067e7140","device":"cpu-0","engine":"ollama","holder":"37908385ff51bf7a","memory_bytes":1073741824,"model":"qwen2.5:0.5b","port":41434},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/deployment-started/1.0","id":"33290d1f-b53f-406d-84b7-27558e1872e6","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T15:26:36.1551863Z","type":"DeploymentStarted"}
-{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"deployment":"dep-763e067e7140","model":"qwen2.5:0.5b","progress_pct":25},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/weights-loading/1.0","id":"d60cff3b-e7e9-4930-b50b-356dc836dcdb","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T15:26:36.1553307Z","type":"WeightsLoading"}
-{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"deployment":"dep-763e067e7140","model":"qwen2.5:0.5b","progress_pct":100},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/weights-loading/1.0","id":"72c12d85-2a2d-4ab6-b05a-e86656532c2e","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T15:26:36.1553439Z","type":"WeightsLoading"}
+{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"image":"ollama/ollama","progress_pct":50},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulling/1.0","id":"cd75be97-1e2e-4cbd-b41a-4096395e70d1","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T18:58:12.2287443Z","type":"ImagePulling"}
+{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"image":"ollama/ollama","progress_pct":100},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulling/1.0","id":"e93d3c01-7b98-4d7b-a6ae-f1882e499f7a","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T18:58:12.2290846Z","type":"ImagePulling"}
+{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"image":"ollama/ollama"},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulled/1.0","id":"a08cdcda-876c-44a7-994d-5e84edc7bd19","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T18:58:12.2296761Z","type":"ImagePulled"}
+{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"container":"fake-1","deployment":"dep-82a263877db9","device":"cpu-0","engine":"ollama","holder":"f3fb6f462fcba16f","memory_bytes":1073741824,"model":"qwen2.5:0.5b","port":41434},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/deployment-started/1.0","id":"a8e0c1a4-ddce-4be8-a12e-acbd950fd2df","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T18:58:12.2297123Z","type":"DeploymentStarted"}
+{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"deployment":"dep-82a263877db9","model":"qwen2.5:0.5b","progress_pct":25},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/weights-loading/1.0","id":"036fa539-cb3c-44fb-abe5-f9ba00a3954a","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T18:58:12.2306879Z","type":"WeightsLoading"}
+{"correlationid":"33333333-4444-4555-8666-777777777777","data":{"deployment":"dep-82a263877db9","model":"qwen2.5:0.5b","progress_pct":100},"datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/weights-loading/1.0","id":"12b96539-ed23-4209-ba4b-7174fbe5d854","source":"io.best.agents","specversion":"1.0","time":"2026-10-17T18:58:12.2307046Z","type":"WeightsLoading"}
 
 $ best query lab-peer get-workloads
 deployment        device  endpoint                                               engine  holder            memory_bytes  model         peer  phase
-dep-763e067e7140  cpu-0   http://127.0.0.1:7792/deployments/dep-763e067e7140/v1  ollama  37908385ff51bf7a  1073741824    qwen2.5:0.5b        ready
+dep-82a263877db9  cpu-0   http://127.0.0.1:7792/deployments/dep-82a263877db9/v1  ollama  f3fb6f462fcba16f  1073741824    qwen2.5:0.5b        ready
 held_bytes: 1073741824
 jobs: []
 share_bytes: 
@@ -187,9 +199,9 @@ $ best send lab-peer deploy-model --id 44444444-5555-4666-8777-888888888888 --da
 Accepted DeployModel: id 44444444-5555-4666-8777-888888888888, correlation 44444444-5555-4666-8777-888888888888.
 Follow it with `best events lab-peer --correlation-id 44444444-5555-4666-8777-888888888888 --follow`.
 [the follow printed, then exited at its limit:]
-{"specversion":"1.0","id":"a5e2a415-82d1-46b7-91a5-f47a8b1212eb","correlationid":"44444444-5555-4666-8777-888888888888","source":"io.best.agents","type":"ImagePulling","datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulling/1.0","time":"2026-10-17T15:26:38.3386035Z","data":{"image":"ollama/ollama","progress_pct":50}}
-{"specversion":"1.0","id":"a23e9ef3-1b43-43d7-bc6f-578d0f1bca88","correlationid":"44444444-5555-4666-8777-888888888888","source":"io.best.agents","type":"ImagePulling","datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulling/1.0","time":"2026-10-17T15:26:38.3386215Z","data":{"image":"ollama/ollama","progress_pct":100}}
-{"specversion":"1.0","id":"c24335dd-cb95-40f8-bbf5-5c12882cca1a","correlationid":"44444444-5555-4666-8777-888888888888","source":"io.best.agents","type":"ImagePulled","datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulled/1.0","time":"2026-10-17T15:26:38.3386314Z","data":{"image":"ollama/ollama"}}
+{"specversion":"1.0","id":"4dff3555-4e58-49ca-a2c9-4cf35c0173f8","correlationid":"44444444-5555-4666-8777-888888888888","source":"io.best.agents","type":"ImagePulling","datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulling/1.0","time":"2026-10-17T18:58:14.4037572Z","data":{"image":"ollama/ollama","progress_pct":50}}
+{"specversion":"1.0","id":"f1788a6d-e95e-4f59-81dd-ffb879df4f89","correlationid":"44444444-5555-4666-8777-888888888888","source":"io.best.agents","type":"ImagePulling","datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulling/1.0","time":"2026-10-17T18:58:14.4037745Z","data":{"image":"ollama/ollama","progress_pct":100}}
+{"specversion":"1.0","id":"c5b1bf2a-f4e1-47d8-8f7d-f7bae77e24a4","correlationid":"44444444-5555-4666-8777-888888888888","source":"io.best.agents","type":"ImagePulled","datacontenttype":"application/json","dataschema":"http://127.0.0.1:7792/events/image-pulled/1.0","time":"2026-10-17T18:58:14.4037845Z","data":{"image":"ollama/ollama"}}
 
 $ best send lab-peer deploy-model --data {"model":"qwen2.5:0.5b"}
 error: SCHEMA_VALIDATION: data: "engine" is a required property. Read the schema at the catalogue's dataschema for deploy-model and send what it asks.
@@ -197,8 +209,8 @@ details: {"errors":[{"message":"\"engine\" is a required property","path":"data"
 [exit 5]
 
 $ best send lab-peer deploy-model --data {"model":"qwen2.5:0.5b","engine":"ollama","memory_bytes":99999999999999}
-error: INSUFFICIENT_MEMORY: no device has 99999999999999 bytes for qwen2.5:0.5b on ollama: cpu-0 (AMD Ryzen 9 6900HX with Radeon Graphics) has 8831856640 free of 30886772736 with 3221225472 promised. Undeploy a model (UndeployModel) or stop a job (StopJob) named in the details, or ask for less memory_bytes
-details: {"devices":[{"free_bytes":8831856640,"holders":[{"deployment":"dep-763e067e7140","memory_bytes":1073741824,"model":"qwen2.5:0.5b"},{"deployment":"dep-ea0a99393f7d","memory_bytes":2147483648,"model":"qwen2.5:1.5b"}],"id":"cpu-0","name":"AMD Ryzen 9 6900HX with Radeon Graphics","promised_bytes":3221225472,"room_bytes":8831856640,"total_bytes":30886772736}],"memory_bytes":99999999999999} (HTTP 400)
+error: INSUFFICIENT_MEMORY: no device has 99999999999999 bytes for qwen2.5:0.5b on ollama: cpu-0 (AMD Ryzen 9 6900HX with Radeon Graphics) has 6440988672 free of 30886772736 with 3221225472 promised. Undeploy a model (UndeployModel) or stop a job (StopJob) named in the details, or ask for less memory_bytes
+details: {"devices":[{"free_bytes":6440988672,"holders":[{"deployment":"dep-82a263877db9","memory_bytes":1073741824,"model":"qwen2.5:0.5b"},{"deployment":"dep-aa694b04d219","memory_bytes":2147483648,"model":"qwen2.5:1.5b"}],"id":"cpu-0","name":"AMD Ryzen 9 6900HX with Radeon Graphics","promised_bytes":3221225472,"room_bytes":6440988672,"total_bytes":30886772736}],"memory_bytes":99999999999999} (HTTP 400)
 [exit 5]
 
 $ best workflows lab-peer
@@ -206,7 +218,7 @@ io.best.agents publishes no workflows.
 
 $ best query lab-peer get-workspaces
 {
-  "identity": "37908385ff51bf7a",
+  "identity": "f3fb6f462fcba16f",
   "invitations": [],
   "workspaces": []
 }
@@ -288,7 +300,7 @@ $ best query local get-market-state --param exchange=NASDAQ
   "exchange": "NASDAQ",
   "ticker": null,
   "isMarketOpen": false,
-  "marketClosedAt": "2026-10-17T15:26:39.5765156Z",
+  "marketClosedAt": "2026-10-17T18:58:15.7021643Z",
   "marketNextOpenUtc": "2026-10-19T13:30:00Z",
   "marketLastClosePrice": null,
   "source": "live"
@@ -371,12 +383,12 @@ $ best send local backfill-price-history --dry-run --data {"CorrelationId":"NASD
   "post": "https://localhost:7175/api/best/tenants/be9e0176-d898-40a0-b558-eaa6f748b6aa/commands",
   "body": {
     "specversion": "1.0",
-    "id": "370eef40-cd18-4005-a84d-b55159f95bc7",
+    "id": "bf9193ae-8290-4ba3-9e9a-566f9f6c6d2a",
     "source": "urn:best-cli",
     "type": "BackfillPriceHistory",
     "datacontenttype": "application/json",
     "dataschema": "https://localhost:7175/api/best/tenants/be9e0176-d898-40a0-b558-eaa6f748b6aa/commands/backfill-price-history/1.0",
-    "time": "2026-10-17T15:26:40.169Z",
+    "time": "2026-10-17T18:58:16.302Z",
     "data": {
       "CorrelationId": "NASDAQ-MSFT"
     }
@@ -395,15 +407,15 @@ Follow it with `best events local --correlation-id NASDAQ-MSFT --follow`.
 
 $ best events local --correlation-id NASDAQ-MSFT --limit 2
 TIME                      TYPE         CORRELATION  ID                                             DATA
-2026-10-17T15:26:40.796Z  PriceTickV1  NASDAQ-MSFT  NASDAQ-MSFT:1min:2026-10-16T23:59:00.0000000Z  {"CorrelationId":"NASDAQ-MSFT","TenantId":"be9e0176-d898-40…
-2026-10-17T15:26:40.796Z  PriceTickV1  NASDAQ-MSFT  NASDAQ-MSFT:1min:2026-10-16T23:58:00.0000000Z  {"CorrelationId":"NASDAQ-MSFT","TenantId":"be9e0176-d898-40…
-2026-10-17T15:26:40.796Z  PriceTickV1  NASDAQ-MSFT  NASDAQ-MSFT:1min:2026-10-16T23:57:00.0000000Z  {"CorrelationId":"NASDAQ-MSFT","TenantId":"be9e0176-d898-40…
+2026-10-17T18:58:16.933Z  PriceTickV1  NASDAQ-MSFT  NASDAQ-MSFT:1min:2026-10-16T23:59:00.0000000Z  {"CorrelationId":"NASDAQ-MSFT","TenantId":"be9e0176-d898-40…
+2026-10-17T18:58:16.933Z  PriceTickV1  NASDAQ-MSFT  NASDAQ-MSFT:1min:2026-10-16T23:58:00.0000000Z  {"CorrelationId":"NASDAQ-MSFT","TenantId":"be9e0176-d898-40…
+2026-10-17T18:58:16.933Z  PriceTickV1  NASDAQ-MSFT  NASDAQ-MSFT:1min:2026-10-16T23:57:00.0000000Z  {"CorrelationId":"NASDAQ-MSFT","TenantId":"be9e0176-d898-40…
 [… 47 more rows: the service answered 50 events for limit=2]
 
 $ timeout 30 best events local --follow --limit 3
-{"specversion":"1.0","id":"NASDAQ-MSFT:1min:2026-10-16T23:59:00.0000000Z","source":"io.dotquant.trading","type":"PriceTickV1","datacontenttype":"application/json","dataschema":"https://localhost:7175/api/best/tenants/be9e0176-d898-40a0-b558-eaa6f748b6aa/events/price-tick/1.0","time":"2026-10-17T15:26:41.037Z","correlationid":"NASDAQ-MSFT","data":{"CorrelationId":"NASDAQ-MSFT","TenantId":"be9e0176-d898-40a0-b558-eaa6f748b6aa","Source":"platform","Interval":"1min","Currency":"USD","Open":527.4,"High":527.44,"Low":527,"Close":527.0258,"Volume":28,"Price":527.0258,"Timestamp":"2026-10-16T23:59:00Z","IsDelayed":false}}
-{"specversion":"1.0","id":"NYSE-DOCN:1min:2026-10-16T20:05:00.0000000Z","source":"io.dotquant.trading","type":"PriceTickV1","datacontenttype":"application/json","dataschema":"https://localhost:7175/api/best/tenants/be9e0176-d898-40a0-b558-eaa6f748b6aa/events/price-tick/1.0","time":"2026-10-17T15:26:40.987Z","correlationid":"NYSE-DOCN","data":{"CorrelationId":"NYSE-DOCN","TenantId":"be9e0176-d898-40a0-b558-eaa6f748b6aa","Source":"platform","Interval":"1min","Currency":"USD","Open":97.285,"High":98.66,"Low":97,"Close":98.66,"Volume":69,"Price":98.66,"Timestamp":"2026-10-16T20:05:00Z","IsDelayed":false}}
-{"specversion":"1.0","id":"NASDAQ-ALAB:1min:2026-10-16T20:05:00.0000000Z","source":"io.dotquant.trading","type":"PriceTickV1","datacontenttype":"application/json","dataschema":"https://localhost:7175/api/best/tenants/be9e0176-d898-40a0-b558-eaa6f748b6aa/events/price-tick/1.0","time":"2026-10-17T15:26:40.994Z","correlationid":"NASDAQ-ALAB","data":{"CorrelationId":"NASDAQ-ALAB","TenantId":"be9e0176-d898-40a0-b558-eaa6f748b6aa","Source":"platform","Interval":"1min","Currency":"USD","Open":285.73,"High":285.73,"Low":285.66,"Close":285.69,"Volume":11,"Price":285.69,"Timestamp":"2026-10-16T20:05:00Z","IsDelayed":false}}
+{"specversion":"1.0","id":"NASDAQ-MSFT:1min:2026-10-16T23:59:00.0000000Z","source":"io.dotquant.trading","type":"PriceTickV1","datacontenttype":"application/json","dataschema":"https://localhost:7175/api/best/tenants/be9e0176-d898-40a0-b558-eaa6f748b6aa/events/price-tick/1.0","time":"2026-10-17T18:58:17.170Z","correlationid":"NASDAQ-MSFT","data":{"CorrelationId":"NASDAQ-MSFT","TenantId":"be9e0176-d898-40a0-b558-eaa6f748b6aa","Source":"platform","Interval":"1min","Currency":"USD","Open":527.4,"High":527.44,"Low":527,"Close":527.0258,"Volume":28,"Price":527.0258,"Timestamp":"2026-10-16T23:59:00Z","IsDelayed":false}}
+{"specversion":"1.0","id":"NYSE-DOCN:1min:2026-10-16T20:05:00.0000000Z","source":"io.dotquant.trading","type":"PriceTickV1","datacontenttype":"application/json","dataschema":"https://localhost:7175/api/best/tenants/be9e0176-d898-40a0-b558-eaa6f748b6aa/events/price-tick/1.0","time":"2026-10-17T18:58:17.120Z","correlationid":"NYSE-DOCN","data":{"CorrelationId":"NYSE-DOCN","TenantId":"be9e0176-d898-40a0-b558-eaa6f748b6aa","Source":"platform","Interval":"1min","Currency":"USD","Open":97.285,"High":98.66,"Low":97,"Close":98.66,"Volume":69,"Price":98.66,"Timestamp":"2026-10-16T20:05:00Z","IsDelayed":false}}
+{"specversion":"1.0","id":"NASDAQ-ALAB:1min:2026-10-16T20:05:00.0000000Z","source":"io.dotquant.trading","type":"PriceTickV1","datacontenttype":"application/json","dataschema":"https://localhost:7175/api/best/tenants/be9e0176-d898-40a0-b558-eaa6f748b6aa/events/price-tick/1.0","time":"2026-10-17T18:58:17.128Z","correlationid":"NASDAQ-ALAB","data":{"CorrelationId":"NASDAQ-ALAB","TenantId":"be9e0176-d898-40a0-b558-eaa6f748b6aa","Source":"platform","Interval":"1min","Currency":"USD","Open":285.73,"High":285.73,"Low":285.66,"Close":285.69,"Volume":11,"Price":285.69,"Timestamp":"2026-10-16T20:05:00Z","IsDelayed":false}}
 [exit 0]
 
 $ best workflows local

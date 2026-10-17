@@ -961,7 +961,8 @@ async fn a_device_code_the_person_holds_is_redeemed_at_the_token_endpoint() {
     assert_never_shows_key(&out);
     out.stderr(predicate::str::contains("Redeeming the device code at"))
         .stderr(predicate::str::contains("Signed in as 'held' (tenant t1)"))
-        .stderr(predicate::str::contains("held-code-1").not());
+        .stderr(predicate::str::contains("held-code-1").not())
+        .stderr(predicate::str::contains("shell history"));
     let entry = &rig.credentials()["held"];
     assert_eq!(entry["apiKey"], KEY);
     assert_eq!(entry["tenantId"], "t1");
@@ -1014,6 +1015,27 @@ async fn a_device_code_is_refused_at_once_by_a_door_with_no_token_endpoint() {
         1,
         "only the manifest was read"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_device_code_is_not_swallowed_by_a_public_door() {
+    let rig = Rig::new().await;
+    let door = MockServer::start().await;
+    let base = door.uri();
+    Mock::given(method("GET"))
+        .and(path("/.well-known/best"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"best": {
+            "version": "0.9.17",
+            "services": {"com.example.open": {"version": "1.0.0", "description": "Open", "http": {"endpoint": format!("{base}/")}}},
+            "capabilities": []
+        }})))
+        .mount(&door)
+        .await;
+    rig.run(&["login", "open", "--manifest", &base, "--device-code", "abc"])
+        .await
+        .code(1)
+        .stderr(predicate::str::contains("declares no tokenUrl"));
+    assert!(rig.credentials().get("open").is_none(), "no entry was stored");
 }
 
 #[tokio::test(flavor = "multi_thread")]

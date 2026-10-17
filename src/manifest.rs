@@ -108,6 +108,9 @@ impl Manifest {
     /// The token endpoint of the first authentication block that declares one: all a device code held already
     /// needs.
     pub fn token_url(&self) -> Result<Option<Url>> {
+        if let Some(registration) = self.registration()? {
+            return Ok(Some(registration.token_url));
+        }
         let mut blocks = vec![self.authentication()];
         if let Some(services) = self.best()["services"].as_object() {
             blocks.extend(services.values().map(|s| &s["authentication"]));
@@ -291,6 +294,26 @@ mod tests {
         assert_eq!(
             address("localhost:7175").unwrap().as_str(),
             "https://localhost:7175/.well-known/best"
+        );
+    }
+
+    #[test]
+    fn a_held_code_goes_where_a_normal_login_would_poll() {
+        let m = manifest(
+            json!({"best": {"authentication": {"type": "apiKey", "tokenUrl": "https://api.example.com/root/token"}, "services": {
+                "com.example.x": {"authentication": {"deviceAuthorizationUrl": "https://api.example.com/auth/device", "tokenUrl": "https://api.example.com/auth/token"}, "http": {"endpoint": "https://api.example.com/x"}}
+            }}}),
+        );
+        assert_eq!(
+            m.token_url().unwrap().unwrap().as_str(),
+            "https://api.example.com/auth/token"
+        );
+        let only_root = manifest(
+            json!({"best": {"authentication": {"type": "apiKey", "tokenUrl": "https://api.example.com/root/token"}}}),
+        );
+        assert_eq!(
+            only_root.token_url().unwrap().unwrap().as_str(),
+            "https://api.example.com/root/token"
         );
     }
 
