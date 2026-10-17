@@ -62,6 +62,8 @@ pub struct Manifest {
 pub struct Registration {
     pub device_authorization_url: Url,
     pub token_url: Url,
+    /// The `note` of the block that declares the device flow: the service's sign-in guidance, as it wrote it.
+    pub note: Option<String>,
 }
 
 impl Manifest {
@@ -94,9 +96,28 @@ impl Manifest {
                 device_authorization_url: Url::parse(d)
                     .with_context(|| format!("deviceAuthorizationUrl '{d}' is not a URL"))?,
                 token_url: Url::parse(t).with_context(|| format!("tokenUrl '{t}' is not a URL"))?,
+                note: block["note"]
+                    .as_str()
+                    .filter(|n| !n.trim().is_empty())
+                    .map(str::to_owned),
             }));
         }
         Ok(None)
+    }
+
+    /// The token endpoint of the first authentication block that declares one: all a device code held already
+    /// needs.
+    pub fn token_url(&self) -> Result<Option<Url>> {
+        let mut blocks = vec![self.authentication()];
+        if let Some(services) = self.best()["services"].as_object() {
+            blocks.extend(services.values().map(|s| &s["authentication"]));
+        }
+        match blocks.into_iter().find_map(|b| b["tokenUrl"].as_str()) {
+            Some(t) => Ok(Some(
+                Url::parse(t).with_context(|| format!("tokenUrl '{t}' is not a URL"))?,
+            )),
+            None => Ok(None),
+        }
     }
 
     /// `tenants.manifest`, the RFC 6570 template of a multi-tenant host.

@@ -116,6 +116,12 @@ pub struct LoginArgs {
     /// What the approver reads when asked to admit you. Default: `best-cli on <this machine>`.
     #[arg(long)]
     pub label: Option<String>,
+
+    /// Redeem a device code you already hold (a registration started on another device, or at an authorization
+    /// URL this machine cannot reach) at the manifest's token endpoint, instead of starting a sign-in. `-` reads
+    /// the code from stdin, so it stays out of the process list.
+    #[arg(long, value_name = "CODE", conflicts_with = "label")]
+    pub device_code: Option<String>,
 }
 
 #[derive(Debug, Args)]

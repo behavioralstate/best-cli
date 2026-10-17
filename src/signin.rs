@@ -23,6 +23,10 @@ pub struct Started {
     pub verification_uri_complete: Option<String>,
     pub expires_in: u64,
     pub interval: u64,
+    /// The `note` of the device answer: the service's guidance for this sign-in, as it wrote it.
+    pub note: Option<String>,
+    /// A code the person already held: the first poll is made at once.
+    held: bool,
     device_code: Secret,
     token_url: Url,
 }
@@ -71,9 +75,30 @@ pub async fn start(http: &Http, registration: &Registration, connection: &str, l
         verification_uri_complete: json["verification_uri_complete"].as_str().map(str::to_owned),
         expires_in: json["expires_in"].as_u64().filter(|n| *n > 0).unwrap_or(900),
         interval: json["interval"].as_u64().filter(|n| *n > 0).unwrap_or(5),
+        note: json["note"]
+            .as_str()
+            .filter(|n| !n.trim().is_empty())
+            .map(str::to_owned),
+        held: false,
         device_code: Secret::new(device_code.to_owned()),
         token_url: registration.token_url.clone(),
     })
+}
+
+/// A device code the person already holds (a registration started on another device, or at an authorization URL
+/// this machine cannot reach): redeemed at the token endpoint like any other.
+pub fn held(token_url: &Url, device_code: String) -> Started {
+    Started {
+        user_code: String::new(),
+        verification_uri: String::new(),
+        verification_uri_complete: None,
+        expires_in: 900,
+        interval: 5,
+        note: None,
+        held: true,
+        device_code: Secret::new(device_code),
+        token_url: token_url.clone(),
+    }
 }
 
 /// One poll of the token endpoint (RFC 8628 §3.4–3.5).
@@ -120,8 +145,11 @@ async fn poll(http: &Http, started: &Started) -> Result<Poll> {
 pub async fn wait(http: &Http, started: &Started, waiting: impl Fn()) -> Result<Issued> {
     let deadline = Instant::now() + Duration::from_secs(started.expires_in);
     let mut interval = Duration::from_secs(started.interval);
+    let mut first = started.held;
     loop {
-        tokio::time::sleep(interval).await;
+        if !std::mem::take(&mut first) {
+            tokio::time::sleep(interval).await;
+        }
         if Instant::now() > deadline {
             return Err(Denied("the code expired before it was approved".into()).into());
         }

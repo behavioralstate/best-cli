@@ -175,34 +175,51 @@ async fn login(ctx: &Ctx, args: LoginArgs) -> Result<()> {
         return report_signed_in(ctx, &store, &name, &entry, "no credential: the surface is public");
     }
 
-    let Some(registration) = root.registration()? else {
-        bail!(
-            "{} declares no deviceAuthorizationUrl: this service issues credentials out of band, on its own site. best-cli cannot sign you in there.",
-            root.host()
-        );
-    };
-    let label = args
-        .label
-        .clone()
-        .unwrap_or_else(|| format!("best-cli on {}", hostname()));
-    let started = signin::start(&ctx.http, &registration, &credentials::connection_word(&name), &label).await?;
+    let started = match &args.device_code {
+        Some(code) => {
+            let code = device_code(code)?;
+            let Some(token_url) = root.token_url()? else {
+                bail!(
+                    "{} declares no tokenUrl, so there is no endpoint to redeem a device code at. Sign in where its manifest says, or without --device-code if it declares a deviceAuthorizationUrl.",
+                    root.host()
+                );
+            };
+            say!("Redeeming the device code at {token_url}…");
+            signin::held(&token_url, code)
+        }
+        None => {
+            let Some(registration) = root.registration()? else {
+                bail!(
+                    "{} declares no deviceAuthorizationUrl: this service issues credentials out of band, on its own site. best-cli cannot sign you in there. If you hold a device code, redeem it with --device-code.",
+                    root.host()
+                );
+            };
+            let label = args
+                .label
+                .clone()
+                .unwrap_or_else(|| format!("best-cli on {}", hostname()));
+            let started = signin::start(&ctx.http, &registration, &credentials::connection_word(&name), &label).await?;
 
-    say!();
-    say!("Open this link in your own browser, sign in and approve:");
-    say!();
-    say!(
-        "    {}",
-        started
-            .verification_uri_complete
-            .as_deref()
-            .unwrap_or(&started.verification_uri)
-    );
-    say!();
-    say!(
-        "The code is {}. Waiting for your approval (the code expires in {} minutes)…",
-        started.user_code,
-        started.expires_in.div_ceil(60)
-    );
+            say!();
+            say!("Open this link in your own browser, sign in and approve:");
+            say!();
+            say!(
+                "    {}",
+                started
+                    .verification_uri_complete
+                    .as_deref()
+                    .unwrap_or(&started.verification_uri)
+            );
+            say!();
+            say!(
+                "The code is {}. Waiting for your approval (the code expires in {} minutes)…",
+                started.user_code,
+                started.expires_in.div_ceil(60)
+            );
+            guidance(registration.note.as_deref(), started.note.as_deref());
+            started
+        }
+    };
 
     let issued = tokio::select! {
         r = signin::wait(&ctx.http, &started, || {}) => r?,
@@ -242,6 +259,39 @@ async fn login(ctx: &Ctx, args: LoginArgs) -> Result<()> {
         None => "the credential is durable until revoked".into(),
     };
     report_signed_in(ctx, &store, &name, &entry, &how)
+}
+
+/// The service's own sign-in guidance, exactly as its manifest and its device answer carry it (SPEC Sign-in
+/// Guidance): what the person reads to know what approving does. Nothing when the service published none.
+fn guidance(manifest_note: Option<&str>, device_note: Option<&str>) {
+    let notes: Vec<&str> = [manifest_note, device_note].into_iter().flatten().collect();
+    if notes.is_empty() {
+        return;
+    }
+    say!();
+    say!("The service's sign-in guidance, as it wrote it:");
+    for note in notes {
+        say!();
+        say!("{note}");
+    }
+}
+
+/// `--device-code`: the code, or `-` to read it from stdin.
+fn device_code(given: &str) -> Result<String> {
+    let code = if given == "-" {
+        let mut s = String::new();
+        std::io::stdin()
+            .read_to_string(&mut s)
+            .context("reading the device code from stdin")?;
+        s
+    } else {
+        given.to_owned()
+    };
+    let code = code.trim().to_owned();
+    if code.is_empty() {
+        bail!(Usage("--device-code is empty".into()));
+    }
+    Ok(code)
 }
 
 fn report_signed_in(ctx: &Ctx, store: &Store, name: &str, entry: &Entry, how: &str) -> Result<()> {

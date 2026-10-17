@@ -150,6 +150,9 @@ impl Rig {
             .success()
             .stderr(predicate::str::contains("/activate?code=WXYZ-1234"))
             .stderr(predicate::str::contains("The code is WXYZ-1234"))
+            .stderr(predicate::str::contains(
+                "The service's sign-in guidance, as it wrote it:\n\nmanifest text\n\ndevice text\n",
+            ))
             .stderr(predicate::str::contains(format!(
                 "Signed in as '{NAME}' (tenant {TENANT})"
             )));
@@ -889,6 +892,127 @@ async fn a_credential_at_a_doors_root_opens_the_roots_services_and_heals_on_next
     assert_eq!(
         rig.credentials()["door"]["endpoints"],
         json!({"io.best.agents": base.trim_end_matches('/')})
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_door_that_publishes_no_guidance_prints_none() {
+    let rig = Rig::new().await;
+    let door = MockServer::start().await;
+    let base = door.uri();
+    Mock::given(method("GET"))
+        .and(path("/.well-known/best"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"best": {
+            "version": "0.9.17",
+            "authentication": {"type": "apiKey", "scheme": "X-Api-Key", "in": "header", "tokenUrl": format!("{base}/auth/token"), "deviceAuthorizationUrl": format!("{base}/auth/device")},
+            "services": {"com.example.x": {"version": "1.0.0", "description": "X", "http": {"endpoint": format!("{base}/")}}},
+            "capabilities": []
+        }})))
+        .mount(&door)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/auth/device"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"device_code": "d", "user_code": "CCCC-DDDD", "verification_uri": format!("{base}/activate"), "expires_in": 60, "interval": 1})))
+        .mount(&door)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/auth/token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"access_token": KEY, "token_type": "apikey", "tenant_id": "t"})),
+        )
+        .mount(&door)
+        .await;
+    rig.run(&["login", "plain", "--manifest", &base])
+        .await
+        .success()
+        .stderr(predicate::str::contains("The code is CCCC-DDDD"))
+        .stderr(predicate::str::contains("sign-in guidance").not());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_device_code_the_person_holds_is_redeemed_at_the_token_endpoint() {
+    let rig = Rig::new().await;
+    let door = MockServer::start().await;
+    let base = door.uri();
+    // Only a token endpoint: the authorization URL is not reachable from here, or not declared.
+    Mock::given(method("GET"))
+        .and(path("/.well-known/best"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"best": {
+            "version": "0.9.17",
+            "authentication": {"type": "apiKey", "scheme": "X-Api-Key", "in": "header", "tokenUrl": format!("{base}/auth/token")},
+            "services": {"com.example.x": {"version": "1.0.0", "description": "X", "http": {"endpoint": format!("{base}/")}}},
+            "capabilities": []
+        }})))
+        .mount(&door)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/auth/token"))
+        .and(body_string_contains("device_code=held-code-1"))
+        .and(body_string_contains("client_id=best-cli"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token": KEY, "token_type": "apikey", "auth_header": "X-Api-Key", "tenant_id": "t1", "name": "held"})))
+        .mount(&door)
+        .await;
+
+    let out = rig
+        .run(&["login", "held", "--manifest", &base, "--device-code", "held-code-1"])
+        .await
+        .success();
+    assert_never_shows_key(&out);
+    out.stderr(predicate::str::contains("Redeeming the device code at"))
+        .stderr(predicate::str::contains("Signed in as 'held' (tenant t1)"))
+        .stderr(predicate::str::contains("held-code-1").not());
+    let entry = &rig.credentials()["held"];
+    assert_eq!(entry["apiKey"], KEY);
+    assert_eq!(entry["tenantId"], "t1");
+    assert_eq!(entry["manifest"], format!("{base}/.well-known/best"));
+    assert!(
+        door.received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| r.url.path() != "/auth/device"),
+        "no sign-in was started"
+    );
+
+    // From stdin, so the code stays out of the process list.
+    rig.run_with_stdin(
+        &["login", "held2", "--manifest", &base, "--device-code", "-"],
+        "held-code-1\n",
+    )
+    .await
+    .success();
+    assert_eq!(rig.credentials()["held2"]["apiKey"], KEY);
+    rig.run_with_stdin(&["login", "held3", "--manifest", &base, "--device-code", "-"], "\n")
+        .await
+        .code(2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_device_code_is_refused_at_once_by_a_door_with_no_token_endpoint() {
+    let rig = Rig::new().await;
+    let door = MockServer::start().await;
+    let base = door.uri();
+    Mock::given(method("GET"))
+        .and(path("/.well-known/best"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"best": {
+            "version": "0.9.17",
+            "authentication": {"type": "apiKey", "scheme": "X-Api-Key", "in": "header"},
+            "services": {"com.example.x": {"version": "1.0.0", "description": "X", "http": {"endpoint": format!("{base}/")}}},
+            "capabilities": []
+        }})))
+        .mount(&door)
+        .await;
+    rig.run(&["login", "nope", "--manifest", &base, "--device-code", "abc"])
+        .await
+        .code(1)
+        .stderr(predicate::str::contains("declares no tokenUrl"))
+        .stderr(predicate::str::contains("abc").not());
+    assert!(rig.credentials().get("nope").is_none());
+    assert_eq!(
+        door.received_requests().await.unwrap().len(),
+        1,
+        "only the manifest was read"
     );
 }
 

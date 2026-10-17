@@ -53,7 +53,14 @@ The credential is in /home/ada/.best-mcp/credentials.json, where best-mcp finds 
 Next: `best queries dotquant` and `best commands dotquant`.
 ```
 
-`best` never opens the link itself: approving is yours. A name that is already signed in is left as it is
+The service's own sign-in guidance (the `note` of its manifest's authentication block, and of its device answer) is
+printed under the code exactly as the service wrote it, and nothing when it published none: it is what says whether
+approving opens an account for you or admits you to a machine someone else runs.
+
+`best` never opens the link itself: approving is yours. A device code you already hold (a registration started on another device, or at an authorization URL this machine
+cannot reach) is redeemed with `best login <name> --manifest <address> --device-code <code>`, or `--device-code -` to
+read it from stdin; a service that declares no token endpoint is refused at once. A name that is already signed in is
+left as it is
 (`best logout <name>` forgets one). Plain `http://` is accepted only on this machine; `--ca-file <pem>` trusts a
 certificate the service's operator sent you (a best-peer makes its own).
 
