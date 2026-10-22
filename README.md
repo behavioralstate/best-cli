@@ -76,7 +76,14 @@ best query dotquant list-brokers       # a table for a list, JSON otherwise
 best query dotquant get-broker-cash --param brokerId=0735cfd1-…
 best events dotquant --limit 20        # the event log
 best events dotquant --follow --type OrderFilled   # what happened, then what happens next, one line per event
+best watch lab-peer get-hardware-state get-workloads   # the answers, the events as they come, an answer again when it moved
 ```
+
+`best watch` keeps a service in view until Ctrl-C: each query's answer once, under its name; then the live stream, one
+line per event; and a query's answer again whenever it moved. The answers are read again shortly after each event
+and every five seconds (`--every`), since some readings change with no event, such as a card its owner is using.
+Nothing is redrawn: each update is printed after the last, so it reads the same in a terminal, a file or a pipe;
+`--json` gives one line per answer or event, and `--limit` stops after so many updates.
 
 **4. Send a command.** The envelope is built from the catalogue (`type`, `dataschema`), the payload is yours:
 

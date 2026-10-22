@@ -8,7 +8,7 @@ use serde_json::{json, Map, Value};
 use url::Url;
 
 use crate::catalogue::{self, Entry as CatalogueEntry, Kind};
-use crate::cli::{Cli, Command, EventsArgs, Kind as SchemaKind, LoginArgs, SendArgs};
+use crate::cli::{Cli, Command, EventsArgs, Kind as SchemaKind, LoginArgs, SendArgs, WatchArgs};
 use crate::credentials::{self, Auth, Entry, Store};
 use crate::http::{join, Http};
 use crate::manifest::{self, Manifest};
@@ -51,6 +51,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Query { name, schema, params } => query(&ctx, &name, &schema, &params).await,
         Command::Send(args) => send(&ctx, args).await,
         Command::Events(args) => events(&ctx, args).await,
+        Command::Watch(args) => watch(&ctx, args).await,
         Command::Workflows { name, id } => workflows(&ctx, &name, id.as_deref()).await,
         Command::Manifest { target } => show_manifest(&ctx, &target).await,
     }
@@ -670,48 +671,94 @@ async fn follow(
         url.query_pairs_mut()
             .extend_pairs(pairs.iter().map(|(k, v)| (*k, v.as_str())));
     }
-    let mut first = true;
+    let mut live = Live::new(url, last_id, seen);
     loop {
-        if !first {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let event = tokio::select! {
+            event = live.next(ctx, c) => event?,
+            _ = tokio::signal::ctrl_c() => return Ok(()),
+        };
+        print_event(&event, as_lines)?;
+        shown += 1;
+        if done(shown) {
+            return Ok(());
         }
-        first = false;
-        let response = ctx.http.open_stream(&url, &c.auth, last_id.as_deref()).await?;
-        let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+    }
+}
+
+/// The live stream (SPEC Events), opened after `last_id` when there is one, reopened after the last event read when
+/// the service closes it or it breaks, and an event whose id was already read skipped. `next` is cancel-safe: what it
+/// had read is kept in `self`, so a `select!` that takes another branch loses no event.
+struct Live {
+    url: Url,
+    last_id: Option<String>,
+    seen: std::collections::HashSet<String>,
+    stream: Option<futures_util::stream::BoxStream<'static, reqwest::Result<Vec<u8>>>>,
+    buffer: String,
+    opened: bool,
+}
+
+impl Live {
+    fn new(url: Url, last_id: Option<String>, seen: std::collections::HashSet<String>) -> Self {
+        Self {
+            url,
+            last_id,
+            seen,
+            stream: None,
+            buffer: String::new(),
+            opened: false,
+        }
+    }
+
+    async fn next(&mut self, ctx: &Ctx, c: &Connection) -> Result<Value> {
         loop {
-            let chunk = tokio::select! {
-                chunk = stream.next() => chunk,
-                _ = tokio::signal::ctrl_c() => return Ok(()),
+            if let Some(event) = self.take_frame() {
+                return Ok(event);
+            }
+            let Some(stream) = self.stream.as_mut() else {
+                if self.opened {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                self.opened = true;
+                let response = ctx
+                    .http
+                    .open_stream(&self.url, &c.auth, self.last_id.as_deref())
+                    .await?;
+                self.stream = Some(response.bytes_stream().map(|b| b.map(|b| b.to_vec())).boxed());
+                continue;
             };
-            match chunk {
-                Some(Ok(bytes)) => buffer.push_str(&String::from_utf8_lossy(&bytes)),
+            match stream.next().await {
+                Some(Ok(bytes)) => self.buffer.push_str(&String::from_utf8_lossy(&bytes)),
                 Some(Err(e)) => {
                     say!("stream interrupted ({e}); reconnecting");
-                    break;
+                    self.stream = None;
+                    self.buffer.clear();
                 }
-                None => break,
-            }
-            while let Some(frame_end) = buffer.find("\n\n") {
-                let frame = buffer[..frame_end].to_owned();
-                buffer.drain(..frame_end + 2);
-                let (id, data) = parse_frame(&frame);
-                let Some(data) = data else { continue };
-                let event: Value = serde_json::from_str(&data).unwrap_or(Value::String(data.clone()));
-                let event_id = id.or_else(|| event["id"].as_str().map(str::to_owned));
-                if let Some(event_id) = &event_id {
-                    last_id = Some(event_id.clone());
-                    if !seen.insert(event_id.clone()) {
-                        continue;
-                    }
-                }
-                print_event(&event, as_lines)?;
-                shown += 1;
-                if done(shown) {
-                    return Ok(());
+                None => {
+                    self.stream = None;
+                    self.buffer.clear();
                 }
             }
         }
+    }
+
+    /// The next whole frame in the buffer that carries an event not read before.
+    fn take_frame(&mut self) -> Option<Value> {
+        while let Some(frame_end) = self.buffer.find("\n\n") {
+            let frame = self.buffer[..frame_end].to_owned();
+            self.buffer.drain(..frame_end + 2);
+            let (id, data) = parse_frame(&frame);
+            let Some(data) = data else { continue };
+            let event: Value = serde_json::from_str(&data).unwrap_or(Value::String(data.clone()));
+            let event_id = id.or_else(|| event["id"].as_str().map(str::to_owned));
+            if let Some(event_id) = &event_id {
+                self.last_id = Some(event_id.clone());
+                if !self.seen.insert(event_id.clone()) {
+                    continue;
+                }
+            }
+            return Some(event);
+        }
+        None
     }
 }
 
@@ -741,6 +788,98 @@ fn print_event(event: &Value, as_lines: bool) -> Result<()> {
         println!("{}  {}  {}  {}", row[0], row[1], row[2], row[4]);
     }
     Ok(())
+}
+
+// ── watch ────────────────────────────────────────────────────────────────────
+
+/// Keeps a service watched: each query's answer first, then the live stream from now on, one line per event, and a
+/// query's answer again whenever it moved. The answers are read again shortly after each event and every `--every`
+/// seconds, since some readings change with no event. Nothing is redrawn: each update is printed after the last, so
+/// the output reads the same in a terminal, a file or a pipe. With `--json`, one line per answer or event.
+async fn watch(ctx: &Ctx, args: WatchArgs) -> Result<()> {
+    let c = connection(ctx, &args.name).await?;
+    let entries = catalogue::fetch(&ctx.http, &c.endpoint, &c.auth, Kind::Queries).await?;
+    let watched: Vec<(String, Url)> = args
+        .queries
+        .iter()
+        .map(|wanted| {
+            let entry = catalogue::find(&entries, wanted, Kind::Queries)?;
+            Ok((
+                entry.schema.clone(),
+                join(&c.endpoint, &format!("queries/{}", entry.schema))?,
+            ))
+        })
+        .collect::<Result<_>>()?;
+    let mut last: Vec<Option<Value>> = vec![None; watched.len()];
+    let mut updates: u32 = 0;
+    let done = |updates: u32| args.limit.is_some_and(|l| updates >= l);
+
+    // The first answers are what is so now; they are not counted as updates.
+    reread(ctx, &c, &watched, &mut last).await?;
+
+    let mut live = Live::new(join(&c.endpoint, "events/stream")?, None, Default::default());
+    let every = std::time::Duration::from_secs(args.every);
+    let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Events come in bursts: the answers are read once the burst has passed, not once per event.
+    let settle = std::time::Duration::from_millis(300);
+    let mut after_events: Option<tokio::time::Instant> = None;
+    loop {
+        let moved = tokio::select! {
+            event = live.next(ctx, &c) => {
+                let event = event?;
+                if ctx.json {
+                    println!("{}", json!({ "event": event }));
+                } else {
+                    print_event(&event, false)?;
+                }
+                after_events.get_or_insert_with(|| tokio::time::Instant::now() + settle);
+                1
+            }
+            _ = tick.tick() => reread(ctx, &c, &watched, &mut last).await?,
+            _ = tokio::time::sleep_until(after_events.unwrap_or_else(tokio::time::Instant::now)), if after_events.is_some() => {
+                after_events = None;
+                reread(ctx, &c, &watched, &mut last).await?
+            }
+            _ = tokio::signal::ctrl_c() => return Ok(()),
+        };
+        updates += moved;
+        if done(updates) {
+            return Ok(());
+        }
+    }
+}
+
+/// Reads every watched query and prints the answers that differ from the last ones shown; says how many it printed.
+/// A credential the service no longer takes ends the watch; any other failure is said and the watch goes on, the
+/// answer shown again once it comes back.
+async fn reread(ctx: &Ctx, c: &Connection, watched: &[(String, Url)], last: &mut [Option<Value>]) -> Result<u32> {
+    let mut printed = 0;
+    for ((schema, url), shown) in watched.iter().zip(last.iter_mut()) {
+        let answer = match ctx.http.get_json(url, &c.auth).await {
+            Ok(answer) => answer,
+            Err(e @ crate::http::Error::Unauthorized { .. }) => return Err(e.into()),
+            Err(e) => {
+                say!("{schema}: {e}");
+                *shown = None;
+                continue;
+            }
+        };
+        if shown.as_ref() == Some(&answer) {
+            continue;
+        }
+        let time = now();
+        if ctx.json {
+            println!("{}", json!({ "query": schema, "time": time, "answer": answer }));
+        } else {
+            println!("== {schema} at {time}");
+            output::answer(&answer)?;
+            println!();
+        }
+        *shown = Some(answer);
+        printed += 1;
+    }
+    Ok(printed)
 }
 
 // ── workflows ────────────────────────────────────────────────────────────────

@@ -1073,3 +1073,149 @@ async fn a_declined_sign_in_ends_with_the_services_words_and_exit_3() {
         .stderr(predicate::str::contains("access_denied: the approver said no"));
     assert!(rig.credentials().get("nope").is_none(), "nothing was stored");
 }
+
+/// What `best watch` reads: two queries whose first answers are A, and whose later answers move as the test says.
+async fn watched(rig: &Rig, later_things: Value) {
+    rig.catalogues().await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("queries/list-things")))
+        .and(header("X-Api-Key", KEY))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [{"name": "first", "state": "up"}]})))
+        .up_to_n_times(1)
+        .mount(&rig.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("queries/list-things")))
+        .and(header("X-Api-Key", KEY))
+        .respond_with(ResponseTemplate::new(200).set_body_json(later_things))
+        .mount(&rig.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("queries/get-total")))
+        .and(header("X-Api-Key", KEY))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"total": 7})))
+        .mount(&rig.server)
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn watch_shows_each_answer_then_the_events_and_an_answer_again_only_when_it_moved() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+    watched(&rig, json!({"items": [{"name": "first", "state": "busy"}]})).await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events/stream")))
+        .and(header("Accept", "text/event-stream"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "text/event-stream")
+                .set_body_string(": keepalive\n\nid: ev1\ndata: {\"id\":\"ev1\",\"type\":\"ThingMoved\",\"correlationid\":\"c1\",\"time\":\"2026-10-22T10:00:00Z\",\"data\":{\"name\":\"first\"}}\n\n"),
+        )
+        .mount(&rig.server)
+        .await;
+
+    let out = rig
+        .run(&["watch", NAME, "list-things", "get-total", "--limit", "2"])
+        .await
+        .success();
+    assert_never_shows_key(&out);
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    let at = |needle: &str| {
+        stdout
+            .find(needle)
+            .unwrap_or_else(|| panic!("no {needle:?} in:\n{stdout}"))
+    };
+    // The first answers, each under its query's name; the event as one line; then the answer that moved, alone.
+    assert!(at("== list-things") < at("up"), "{stdout}");
+    assert!(at("up") < at("== get-total"), "{stdout}");
+    assert!(at("== get-total") < at("ThingMoved"), "{stdout}");
+    assert!(at("ThingMoved") < at("busy"), "{stdout}");
+    assert_eq!(stdout.matches("== list-things").count(), 2, "{stdout}");
+    assert_eq!(
+        stdout.matches("== get-total").count(),
+        1,
+        "an answer that did not move is not shown again: {stdout}"
+    );
+
+    // The stream was opened from now on, with no history: the answers are what is so now.
+    let streams = rig.requests("GET", &rig.tenant("events/stream")).await;
+    assert!(!streams.is_empty());
+    assert!(streams[0].headers.get("Last-Event-ID").is_none());
+    assert!(
+        rig.requests("GET", &rig.tenant("events")).await.is_empty(),
+        "no history is read"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn watch_reads_the_answers_again_on_its_own_since_some_change_with_no_event() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+    watched(&rig, json!({"items": [{"name": "first", "state": "held"}]})).await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events/stream")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "text/event-stream")
+                .set_body_string(": keepalive\n\n"),
+        )
+        .mount(&rig.server)
+        .await;
+
+    let out = rig
+        .run(&["watch", NAME, "list-things", "--every", "1", "--limit", "1"])
+        .await
+        .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(stdout.find("up").unwrap() < stdout.find("held").unwrap(), "{stdout}");
+    assert_eq!(stdout.matches("== list-things").count(), 2, "{stdout}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn watch_with_json_is_one_line_per_answer_or_event() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+    watched(&rig, json!({"items": [{"name": "first", "state": "busy"}]})).await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events/stream")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "text/event-stream")
+                .set_body_string("id: ev1\ndata: {\"id\":\"ev1\",\"type\":\"ThingMoved\"}\n\n"),
+        )
+        .mount(&rig.server)
+        .await;
+
+    let out = rig
+        .run(&["watch", NAME, "list-things", "get-total", "--json", "--limit", "2"])
+        .await
+        .success();
+    let lines: Vec<Value> = String::from_utf8_lossy(&out.get_output().stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
+        .collect();
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    assert_eq!(lines[0]["query"], "list-things");
+    assert_eq!(lines[0]["answer"]["items"][0]["state"], "up");
+    assert!(lines[0]["time"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(lines[1]["query"], "get-total");
+    assert_eq!(lines[1]["answer"], json!({"total": 7}));
+    assert_eq!(lines[2]["event"]["id"], "ev1");
+    assert_eq!(lines[3]["query"], "list-things");
+    assert_eq!(lines[3]["answer"]["items"][0]["state"], "busy");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn watch_refuses_a_query_the_service_does_not_answer_before_it_reads_anything() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+    rig.catalogues().await;
+    rig.run(&["watch", NAME, "list-things", "no-such-query"])
+        .await
+        .failure()
+        .stderr(predicate::str::contains("no-such-query"));
+    assert!(rig.requests("GET", &rig.tenant("queries/list-things")).await.is_empty());
+    assert!(rig.requests("GET", &rig.tenant("events/stream")).await.is_empty());
+    rig.run(&["watch", NAME]).await.code(2);
+    rig.run(&["watch", NAME, "list-things", "--every", "0"]).await.code(2);
+}

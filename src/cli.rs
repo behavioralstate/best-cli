@@ -89,6 +89,9 @@ pub enum Command {
     /// Read the service's event log, or follow its live stream.
     Events(EventsArgs),
 
+    /// Keep watching a service: each query's answer, the events as they arrive, and an answer again when it moved.
+    Watch(WatchArgs),
+
     /// The service's published workflows: the index, or one recipe with its steps.
     Workflows {
         /// The connection (see `best connections`).
@@ -203,6 +206,25 @@ pub struct EventsArgs {
     /// Resume the stream after this event id (sent as Last-Event-ID), skipping the history. With --follow.
     #[arg(long, requires = "follow", value_name = "ID")]
     pub last_event_id: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct WatchArgs {
+    /// The connection (see `best connections`).
+    pub name: String,
+
+    /// The queries to keep answered, by schema name (see `best queries <connection>`). At least one.
+    #[arg(required = true, value_name = "QUERY")]
+    pub queries: Vec<String>,
+
+    /// Read the answers again every this many seconds, besides after each event: some readings change with no event.
+    #[arg(long, default_value_t = 5, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..=3600))]
+    pub every: u64,
+
+    /// Stop after this many updates (an event shown, or an answer that moved; the first answers are not counted).
+    /// Otherwise it runs until Ctrl-C.
+    #[arg(long)]
+    pub limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
