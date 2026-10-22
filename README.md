@@ -83,7 +83,9 @@ best watch lab-peer get-hardware-state get-workloads   # the answers, the events
 line per event; and a query's answer again whenever it moved. The answers are read again shortly after each event
 and every five seconds (`--every`), since some readings change with no event, such as a card its owner is using.
 Nothing is redrawn: each update is printed after the last, so it reads the same in a terminal, a file or a pipe;
-`--json` gives one line per answer or event, and `--limit` stops after so many updates.
+`--json` gives one line per answer (`{"query", "time", "answer"}`) or event (`{"event"}`), and `--limit` stops after so
+many updates. A service that restarts or fails for a moment is said on stderr and the watch goes on; its refusal ends
+the watch with the service's words and its exit code.
 
 **4. Send a command.** The envelope is built from the catalogue (`type`, `dataschema`), the payload is yours:
 

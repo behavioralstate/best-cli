@@ -1126,10 +1126,10 @@ async fn watch_shows_each_answer_then_the_events_and_an_answer_again_only_when_i
             .unwrap_or_else(|| panic!("no {needle:?} in:\n{stdout}"))
     };
     // The first answers, each under its query's name; the event as one line; then the answer that moved, alone.
-    assert!(at("== list-things") < at("up"), "{stdout}");
-    assert!(at("up") < at("== get-total"), "{stdout}");
+    assert!(at("== list-things") < at("first  up"), "{stdout}");
+    assert!(at("first  up") < at("== get-total"), "{stdout}");
     assert!(at("== get-total") < at("ThingMoved"), "{stdout}");
-    assert!(at("ThingMoved") < at("busy"), "{stdout}");
+    assert!(at("ThingMoved") < at("first  busy"), "{stdout}");
     assert_eq!(stdout.matches("== list-things").count(), 2, "{stdout}");
     assert_eq!(
         stdout.matches("== get-total").count(),
@@ -1218,4 +1218,197 @@ async fn watch_refuses_a_query_the_service_does_not_answer_before_it_reads_anyth
     assert!(rig.requests("GET", &rig.tenant("events/stream")).await.is_empty());
     rig.run(&["watch", NAME]).await.code(2);
     rig.run(&["watch", NAME, "list-things", "--every", "0"]).await.code(2);
+}
+
+/// One query whose answer never moves, so only what a test sends counts as an update.
+async fn still(rig: &Rig) {
+    rig.catalogues().await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("queries/list-things")))
+        .and(header("X-Api-Key", KEY))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [{"name": "first", "state": "up"}]})))
+        .mount(&rig.server)
+        .await;
+}
+
+fn sse(frames: &str) -> ResponseTemplate {
+    ResponseTemplate::new(200)
+        .insert_header("Content-Type", "text/event-stream")
+        .set_body_string(frames.to_owned())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn watch_reopens_the_stream_after_the_last_event_even_while_its_answers_are_read_every_second() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+    still(&rig).await;
+    // The first stream gives ev1 and closes; the reopened one, asked after ev1, replays it and gives ev2.
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events/stream")))
+        .and(header("Last-Event-ID", "ev1"))
+        .respond_with(sse("id: ev1\ndata: {\"id\":\"ev1\",\"type\":\"First\"}\n\nid: ev2\ndata: {\"id\":\"ev2\",\"type\":\"Second\"}\n\n"))
+        .mount(&rig.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events/stream")))
+        .respond_with(sse("id: ev1\ndata: {\"id\":\"ev1\",\"type\":\"First\"}\n\n"))
+        .mount(&rig.server)
+        .await;
+
+    let out = rig
+        .run(&["watch", NAME, "list-things", "--every", "1", "--limit", "2"])
+        .await
+        .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert_eq!(
+        stdout.matches("First").count(),
+        1,
+        "ev1 once, though replayed: {stdout}"
+    );
+    assert!(stdout.contains("Second"), "{stdout}");
+    assert_eq!(
+        stdout.matches("== list-things").count(),
+        1,
+        "an answer that never moved is shown once: {stdout}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn watch_says_a_service_that_fails_for_a_moment_and_goes_on() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+    rig.catalogues().await;
+    for (status, body) in [
+        (200, json!({"items": [{"name": "first", "state": "up"}]})),
+        (503, json!({"error": {"code": "DOWN", "message": "restarting"}})),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(rig.tenant("queries/list-things")))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .up_to_n_times(1)
+            .mount(&rig.server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("queries/list-things")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [{"name": "first", "state": "up"}]})))
+        .mount(&rig.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events/stream")))
+        .respond_with(sse(": keepalive\n\n"))
+        .mount(&rig.server)
+        .await;
+
+    let out = rig
+        .run(&["watch", NAME, "list-things", "--every", "1", "--limit", "1"])
+        .await
+        .success()
+        .stderr(predicate::str::contains("list-things: DOWN: restarting (HTTP 503)"));
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert_eq!(
+        stdout.matches("== list-things").count(),
+        2,
+        "the same answer is shown again once it is back, since the failure stood between: {stdout}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn watch_ends_on_the_services_refusal_and_on_a_credential_it_no_longer_takes() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+    rig.catalogues().await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("queries/get-total")))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_json(json!({"error": {"code": "MISSING_PARAMETER", "message": "brokerId is required"}})),
+        )
+        .mount(&rig.server)
+        .await;
+    rig.run(&["watch", NAME, "get-total"])
+        .await
+        .code(5)
+        .stderr(predicate::str::contains("MISSING_PARAMETER: brokerId is required"));
+    assert!(rig.requests("GET", &rig.tenant("events/stream")).await.is_empty());
+
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("queries/list-things")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [{"name": "first", "state": "up"}]})))
+        .up_to_n_times(1)
+        .mount(&rig.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("queries/list-things")))
+        .respond_with(
+            ResponseTemplate::new(401).set_body_json(json!({"error": {"code": "UNAUTHORIZED", "message": "revoked"}})),
+        )
+        .mount(&rig.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events/stream")))
+        .respond_with(sse(": keepalive\n\n"))
+        .mount(&rig.server)
+        .await;
+    let out = rig.run(&["watch", NAME, "list-things", "--every", "1"]).await.code(3);
+    assert_never_shows_key(&out);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn watch_stops_at_its_limit_even_when_several_answers_moved_at_once() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+    rig.catalogues().await;
+    // Both answers move between the first read and the next.
+    for (query, first, then) in [
+        ("get-total", json!({"total": 7}), json!({"total": 8})),
+        (
+            "list-things",
+            json!({"items": [{"name": "first", "state": "up"}]}),
+            json!({"items": [{"name": "first", "state": "busy"}]}),
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(rig.tenant(&format!("queries/{query}"))))
+            .respond_with(ResponseTemplate::new(200).set_body_json(first))
+            .up_to_n_times(1)
+            .mount(&rig.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(rig.tenant(&format!("queries/{query}"))))
+            .respond_with(ResponseTemplate::new(200).set_body_json(then))
+            .mount(&rig.server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events/stream")))
+        .respond_with(sse(": keepalive\n\n"))
+        .mount(&rig.server)
+        .await;
+
+    let out = rig
+        .run(&[
+            "watch",
+            NAME,
+            "get-total",
+            "list-things",
+            "--every",
+            "1",
+            "--limit",
+            "1",
+            "--json",
+        ])
+        .await
+        .success();
+    let lines: Vec<Value> = String::from_utf8_lossy(&out.get_output().stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(
+        lines.len(),
+        3,
+        "the two first answers, then one update and no more: {lines:?}"
+    );
+    assert_eq!(lines[2]["query"], "get-total");
+    assert_eq!(lines[2]["answer"]["total"], 8);
 }

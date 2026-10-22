@@ -639,7 +639,7 @@ async fn follow(
     last_event_id: Option<&str>,
 ) -> Result<()> {
     let as_lines = ctx.json || !std::io::stdout().is_terminal();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen = Seen::default();
     let mut last_id = last_event_id.map(str::to_owned);
     let mut shown: u32 = 0;
     let done = |shown: u32| limit.is_some_and(|l| shown >= l);
@@ -656,7 +656,7 @@ async fn follow(
         for event in answer["events"].as_array().into_iter().flatten() {
             print_event(event, as_lines)?;
             if let Some(id) = event["id"].as_str() {
-                seen.insert(id.to_owned());
+                seen.insert(id);
                 last_id = Some(id.to_owned());
             }
             shown += 1;
@@ -671,11 +671,13 @@ async fn follow(
         url.query_pairs_mut()
             .extend_pairs(pairs.iter().map(|(k, v)| (*k, v.as_str())));
     }
-    let mut live = Live::new(url, last_id, seen);
+    let mut events = live(ctx.http.clone(), c.auth.clone(), url, last_id, seen);
+    let quit = tokio::signal::ctrl_c();
+    tokio::pin!(quit);
     loop {
         let event = tokio::select! {
-            event = live.next(ctx, c) => event?,
-            _ = tokio::signal::ctrl_c() => return Ok(()),
+            _ = &mut quit => return Ok(()),
+            event = events.recv() => next_event(event)?,
         };
         print_event(&event, as_lines)?;
         shown += 1;
@@ -685,80 +687,112 @@ async fn follow(
     }
 }
 
-/// The live stream (SPEC Events), opened after `last_id` when there is one, reopened after the last event read when
-/// the service closes it or it breaks, and an event whose id was already read skipped. `next` is cancel-safe: what it
-/// had read is kept in `self`, so a `select!` that takes another branch loses no event.
-struct Live {
-    url: Url,
-    last_id: Option<String>,
-    seen: std::collections::HashSet<String>,
-    stream: Option<futures_util::stream::BoxStream<'static, reqwest::Result<Vec<u8>>>>,
-    buffer: String,
-    opened: bool,
+/// The ids of the events already shown, the newest few thousand: enough to skip what a reopened stream replays,
+/// bounded however long the stream runs.
+#[derive(Default)]
+struct Seen {
+    order: std::collections::VecDeque<String>,
+    ids: std::collections::HashSet<String>,
 }
 
-impl Live {
-    fn new(url: Url, last_id: Option<String>, seen: std::collections::HashSet<String>) -> Self {
-        Self {
-            url,
-            last_id,
-            seen,
-            stream: None,
-            buffer: String::new(),
-            opened: false,
-        }
-    }
+impl Seen {
+    const KEPT: usize = 4096;
 
-    async fn next(&mut self, ctx: &Ctx, c: &Connection) -> Result<Value> {
+    /// Whether `id` is new, remembering it.
+    fn insert(&mut self, id: &str) -> bool {
+        if !self.ids.insert(id.to_owned()) {
+            return false;
+        }
+        self.order.push_back(id.to_owned());
+        if self.order.len() > Self::KEPT {
+            if let Some(old) = self.order.pop_front() {
+                self.ids.remove(&old);
+            }
+        }
+        true
+    }
+}
+
+/// The live stream (SPEC Events), read by a task of its own that hands each event not seen before over the channel,
+/// so the reader can wait on other things at once and lose nothing. It is opened after `last_id` when there is one,
+/// and reopened after the last event read, two seconds on, when the service closes it or it breaks. A first open
+/// that fails ends it, the error handed over; a reopen that fails is said and tried again while the service is
+/// unreachable, failing (5xx) or pacing (429), and ends it otherwise, a credential refused among them.
+fn live(
+    http: Http,
+    auth: Auth,
+    url: Url,
+    mut last_id: Option<String>,
+    mut seen: Seen,
+) -> tokio::sync::mpsc::Receiver<Result<Value, crate::http::Error>> {
+    let (tx, rx) = tokio::sync::mpsc::channel(256);
+    tokio::spawn(async move {
+        let mut reopening = false;
         loop {
-            if let Some(event) = self.take_frame() {
-                return Ok(event);
+            if reopening {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
-            let Some(stream) = self.stream.as_mut() else {
-                if self.opened {
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                }
-                self.opened = true;
-                let response = ctx
-                    .http
-                    .open_stream(&self.url, &c.auth, self.last_id.as_deref())
-                    .await?;
-                self.stream = Some(response.bytes_stream().map(|b| b.map(|b| b.to_vec())).boxed());
-                continue;
-            };
-            match stream.next().await {
-                Some(Ok(bytes)) => self.buffer.push_str(&String::from_utf8_lossy(&bytes)),
-                Some(Err(e)) => {
-                    say!("stream interrupted ({e}); reconnecting");
-                    self.stream = None;
-                    self.buffer.clear();
-                }
-                None => {
-                    self.stream = None;
-                    self.buffer.clear();
-                }
-            }
-        }
-    }
-
-    /// The next whole frame in the buffer that carries an event not read before.
-    fn take_frame(&mut self) -> Option<Value> {
-        while let Some(frame_end) = self.buffer.find("\n\n") {
-            let frame = self.buffer[..frame_end].to_owned();
-            self.buffer.drain(..frame_end + 2);
-            let (id, data) = parse_frame(&frame);
-            let Some(data) = data else { continue };
-            let event: Value = serde_json::from_str(&data).unwrap_or(Value::String(data.clone()));
-            let event_id = id.or_else(|| event["id"].as_str().map(str::to_owned));
-            if let Some(event_id) = &event_id {
-                self.last_id = Some(event_id.clone());
-                if !self.seen.insert(event_id.clone()) {
+            let response = match http.open_stream(&url, &auth, last_id.as_deref()).await {
+                Ok(response) => response,
+                Err(e) if reopening && passes(&e) => {
+                    say!("the event stream could not be reopened ({e}); trying again");
                     continue;
                 }
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    return;
+                }
+            };
+            reopening = true;
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
+            loop {
+                match stream.next().await {
+                    Some(Ok(bytes)) => buffer.push_str(&String::from_utf8_lossy(&bytes)),
+                    Some(Err(e)) => {
+                        say!("stream interrupted ({e}); reconnecting");
+                        break;
+                    }
+                    None => break,
+                }
+                while let Some(frame_end) = buffer.find("\n\n") {
+                    let frame = buffer[..frame_end].to_owned();
+                    buffer.drain(..frame_end + 2);
+                    let (id, data) = parse_frame(&frame);
+                    let Some(data) = data else { continue };
+                    let event: Value = serde_json::from_str(&data).unwrap_or(Value::String(data.clone()));
+                    if let Some(event_id) = id.or_else(|| event["id"].as_str().map(str::to_owned)) {
+                        let new = seen.insert(&event_id);
+                        last_id = Some(event_id);
+                        if !new {
+                            continue;
+                        }
+                    }
+                    if tx.send(Ok(event)).await.is_err() {
+                        return;
+                    }
+                }
             }
-            return Some(event);
         }
-        None
+    });
+    rx
+}
+
+/// Whether a failed read is the service passing through a bad moment (unreachable, failing, pacing), not its answer.
+fn passes(e: &crate::http::Error) -> bool {
+    match e {
+        crate::http::Error::Unreachable(_) | crate::http::Error::Failed { .. } => true,
+        crate::http::Error::Refused { status, .. } => *status == 429,
+        _ => false,
+    }
+}
+
+/// The next event from [`live`], or why the stream ended.
+fn next_event(event: Option<Result<Value, crate::http::Error>>) -> Result<Value> {
+    match event {
+        Some(Ok(event)) => Ok(event),
+        Some(Err(e)) => Err(e.into()),
+        None => bail!("the event stream ended"),
     }
 }
 
@@ -792,10 +826,17 @@ fn print_event(event: &Value, as_lines: bool) -> Result<()> {
 
 // ── watch ────────────────────────────────────────────────────────────────────
 
+/// How long the answers wait after an event for the rest of its burst, and the longest a steady stream of events
+/// holds them back.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
+const SETTLE_AT_MOST: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Keeps a service watched: each query's answer first, then the live stream from now on, one line per event, and a
-/// query's answer again whenever it moved. The answers are read again shortly after each event and every `--every`
-/// seconds, since some readings change with no event. Nothing is redrawn: each update is printed after the last, so
-/// the output reads the same in a terminal, a file or a pipe. With `--json`, one line per answer or event.
+/// query's answer again whenever it moved. The answers are read again once a burst of events has passed and every
+/// `--every` seconds, since some readings change with no event. Nothing is redrawn: each update is printed after the
+/// last, so the output reads the same in a terminal, a file or a pipe. With `--json`, one line per answer
+/// (`{"query", "time", "answer"}`) or event (`{"event"}`). A service passing through a bad moment is said and the
+/// watch goes on; its refusal, a credential it no longer takes among them, ends it with the service's words.
 async fn watch(ctx: &Ctx, args: WatchArgs) -> Result<()> {
     let c = connection(ctx, &args.name).await?;
     let entries = catalogue::fetch(&ctx.http, &c.endpoint, &c.auth, Kind::Queries).await?;
@@ -811,59 +852,91 @@ async fn watch(ctx: &Ctx, args: WatchArgs) -> Result<()> {
         })
         .collect::<Result<_>>()?;
     let mut last: Vec<Option<Value>> = vec![None; watched.len()];
-    let mut updates: u32 = 0;
-    let done = |updates: u32| args.limit.is_some_and(|l| updates >= l);
+    // The updates left before `--limit` stops it: an event shown, or an answer that moved.
+    let mut left = args.limit;
+    let quit = tokio::signal::ctrl_c();
+    tokio::pin!(quit);
 
     // The first answers are what is so now; they are not counted as updates.
-    reread(ctx, &c, &watched, &mut last).await?;
+    let mut uncounted = None;
+    tokio::select! {
+        _ = &mut quit => return Ok(()),
+        read = reread(ctx, &c, &watched, &mut last, &mut uncounted) => read?,
+    }
 
-    let mut live = Live::new(join(&c.endpoint, "events/stream")?, None, Default::default());
+    let mut events = live(
+        ctx.http.clone(),
+        c.auth.clone(),
+        join(&c.endpoint, "events/stream")?,
+        None,
+        Seen::default(),
+    );
     let every = std::time::Duration::from_secs(args.every);
     let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    // Events come in bursts: the answers are read once the burst has passed, not once per event.
-    let settle = std::time::Duration::from_millis(300);
-    let mut after_events: Option<tokio::time::Instant> = None;
-    loop {
-        let moved = tokio::select! {
-            event = live.next(ctx, &c) => {
-                let event = event?;
+    // The burst of events being waited out: when it began, and when the answers are read.
+    let mut burst: Option<(tokio::time::Instant, tokio::time::Instant)> = None;
+    while left != Some(0) {
+        let read_now = tokio::select! {
+            _ = &mut quit => return Ok(()),
+            event = events.recv() => {
+                let event = next_event(event)?;
                 if ctx.json {
                     println!("{}", json!({ "event": event }));
                 } else {
                     print_event(&event, false)?;
                 }
-                after_events.get_or_insert_with(|| tokio::time::Instant::now() + settle);
-                1
+                spend(&mut left);
+                let now = tokio::time::Instant::now();
+                let began = burst.map_or(now, |(began, _)| began);
+                burst = Some((began, (now + SETTLE).min(began + SETTLE_AT_MOST)));
+                false
             }
-            _ = tick.tick() => reread(ctx, &c, &watched, &mut last).await?,
-            _ = tokio::time::sleep_until(after_events.unwrap_or_else(tokio::time::Instant::now)), if after_events.is_some() => {
-                after_events = None;
-                reread(ctx, &c, &watched, &mut last).await?
+            _ = tick.tick() => true,
+            _ = tokio::time::sleep_until(burst.map_or_else(tokio::time::Instant::now, |(_, due)| due)), if burst.is_some() => {
+                burst = None;
+                true
             }
-            _ = tokio::signal::ctrl_c() => return Ok(()),
         };
-        updates += moved;
-        if done(updates) {
-            return Ok(());
+        if read_now && left != Some(0) {
+            tokio::select! {
+                _ = &mut quit => return Ok(()),
+                read = reread(ctx, &c, &watched, &mut last, &mut left) => read?,
+            }
         }
+    }
+    Ok(())
+}
+
+/// One update spent from what `--limit` left.
+fn spend(left: &mut Option<u32>) {
+    if let Some(n) = left {
+        *n = n.saturating_sub(1);
     }
 }
 
-/// Reads every watched query and prints the answers that differ from the last ones shown; says how many it printed.
-/// A credential the service no longer takes ends the watch; any other failure is said and the watch goes on, the
-/// answer shown again once it comes back.
-async fn reread(ctx: &Ctx, c: &Connection, watched: &[(String, Url)], last: &mut [Option<Value>]) -> Result<u32> {
-    let mut printed = 0;
+/// Reads every watched query and prints the answers that differ from the last ones shown, stopping once `left` is
+/// spent. A service passing through a bad moment is said and its answer shown again once it comes back; any other
+/// failure, its refusal or a credential it no longer takes, ends the watch.
+async fn reread(
+    ctx: &Ctx,
+    c: &Connection,
+    watched: &[(String, Url)],
+    last: &mut [Option<Value>],
+    left: &mut Option<u32>,
+) -> Result<()> {
     for ((schema, url), shown) in watched.iter().zip(last.iter_mut()) {
+        if *left == Some(0) {
+            break;
+        }
         let answer = match ctx.http.get_json(url, &c.auth).await {
             Ok(answer) => answer,
-            Err(e @ crate::http::Error::Unauthorized { .. }) => return Err(e.into()),
-            Err(e) => {
+            Err(e) if passes(&e) => {
                 say!("{schema}: {e}");
                 *shown = None;
                 continue;
             }
+            Err(e) => return Err(anyhow::Error::from(e).context(format!("{schema} was refused"))),
         };
         if shown.as_ref() == Some(&answer) {
             continue;
@@ -877,9 +950,9 @@ async fn reread(ctx: &Ctx, c: &Connection, watched: &[(String, Url)], last: &mut
             println!();
         }
         *shown = Some(answer);
-        printed += 1;
+        spend(left);
     }
-    Ok(printed)
+    Ok(())
 }
 
 // ── workflows ────────────────────────────────────────────────────────────────
