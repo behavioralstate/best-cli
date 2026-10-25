@@ -24,7 +24,7 @@ credential is kept. How work is made and shipped is [SDLC.md](../../SDLC.md); op
 
 - **The manifest and the catalogues decide.** A new capability is read from what the service publishes; it is never a
   field, a path or a parameter written in for a service. If a service needs something the protocol does not say, that
-  is a spec follow-up, not a special case here.
+  is the service's own, not a special case here, and not a reason to change the spec (SDLC.md section 1).
 - **The store is best-mcp's.** Same file, same variable (`BEST_MCP_CREDENTIALS_FILE`), same members in the same order,
   same name rule. An entry that exists is not signed in again or edited by a login; unknown members and other entries
   pass through; the file is backed up before every write and is owner-readable only.

@@ -1,14 +1,18 @@
 # How best-cli is built and shipped
 
 > This is the one place the lifecycle of this repository is written down. Open work of any kind (a slice, a bug, a
-> decision, a spec gap) is an issue on the Behavioralstate board, never a file: the epic
+> decision) is an issue on the Behavioralstate board, never a file: the epic
 > [behavioralstate/spec#52](https://github.com/behavioralstate/spec/issues/52) and its sub-issues are the plan.
 
 ## 1. Intake
 
 - Work is a slice of the epic, or an issue filed next to it on the same board, with the problem, the outcome from the
-  person's side, numbered decisions, and a "Done when" list. A spec gap met while implementing is an entry on the spec
-  follow-ups issue, never a silent patch and never a spec change up front.
+  person's side, numbered decisions, and a "Done when" list.
+- **The BEST spec is stable** ([behavioralstate/spec#37](https://github.com/behavioralstate/spec/issues/37) holds the
+  rule). What a service does that the spec does not mention is that service's own: never an entry on #37, a spec
+  issue or a spec pull request. Only the owner changes the spec, on proof that two independent implementations read
+  the same sentence differently and a client failed, or that a client could not be written from the text; a session
+  that believes it holds that proof brings it to the owner in the chat and stops.
 - Ambiguity is resolved by reading the spec, best-mcp's source and the running code, never by guessing.
 
 ## 2. Design rules every change is held to
