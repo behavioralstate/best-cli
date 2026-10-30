@@ -182,11 +182,11 @@ pub struct EventsArgs {
     #[arg(long)]
     pub source: Option<String>,
 
-    /// From this time on (ISO 8601). History only.
+    /// From this time on (ISO 8601). History only: with --follow, the history it starts with.
     #[arg(long)]
     pub from: Option<String>,
 
-    /// Up to this time (ISO 8601). History only.
+    /// Up to this time (ISO 8601). History only: with --follow, the history it starts with.
     #[arg(long)]
     pub to: Option<String>,
 

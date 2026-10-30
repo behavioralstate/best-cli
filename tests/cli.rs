@@ -739,6 +739,64 @@ async fn events_are_read_as_a_table_and_followed_as_lines() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_follow_resumes_after_the_newest_event_of_its_history_whatever_order_the_page_is_in() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+    // The spec does not order `GET /events`: this service answers newest first, and its times carry offsets, so
+    // neither the place in the page nor the text of the time says which is newest: ev-new is 10:00:02Z and its
+    // time sorts first as text, ev-old is 09:59:00Z and sorts last.
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events")))
+        .and(query_param("from", "2026-10-30T09:00:00Z"))
+        .and(query_param("to", "2026-10-30T11:00:00Z"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"events": [
+            {"id": "ev-new", "type": "OrderFilled", "time": "2026-10-30T05:00:02-05:00", "data": {}},
+            {"id": "ev-mid", "type": "OrderFilled", "time": "2026-10-30T10:00:01Z", "data": {}},
+            {"id": "ev-old", "type": "OrderFilled", "time": "2026-10-30T11:59:00+02:00", "data": {}}
+        ]})))
+        .mount(&rig.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(rig.tenant("events/stream")))
+        .and(header("Last-Event-ID", "ev-new"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "text/event-stream")
+                .set_body_string("id: ev-next\ndata: {\"id\":\"ev-next\",\"type\":\"OrderFilled\"}\n\n"),
+        )
+        .mount(&rig.server)
+        .await;
+    let out = rig
+        .run(&[
+            "events",
+            NAME,
+            "--follow",
+            "--from",
+            "2026-10-30T09:00:00Z",
+            "--to",
+            "2026-10-30T11:00:00Z",
+            "--limit",
+            "4",
+        ])
+        .await
+        .success();
+    let ids: Vec<String> = String::from_utf8_lossy(&out.get_output().stdout)
+        .lines()
+        .map(|l| {
+            serde_json::from_str::<Value>(l).unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(ids, ["ev-new", "ev-mid", "ev-old", "ev-next"]);
+    // The window bounds the history only: the stream has no time filter in the spec, so none is sent to it.
+    let streams = rig.requests("GET", &rig.tenant("events/stream")).await;
+    assert_eq!(streams.len(), 1);
+    assert_eq!(streams[0].url.query(), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn workflows_are_the_index_then_one_recipe() {
     let rig = Rig::new().await;
     rig.signed_in();

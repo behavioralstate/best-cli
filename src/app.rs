@@ -575,15 +575,18 @@ async fn events(ctx: &Ctx, args: EventsArgs) -> Result<()> {
     if let Some(v) = &args.source {
         pairs.push(("source", v.clone()));
     }
-    if args.follow {
-        return follow(ctx, &c, &pairs, args.limit, args.last_event_id.as_deref()).await;
-    }
+    // The time window bounds the history, the follow's too; the stream has no time filter.
+    let mut window: Vec<(&str, String)> = Vec::new();
     if let Some(v) = &args.from {
-        pairs.push(("from", v.clone()));
+        window.push(("from", v.clone()));
     }
     if let Some(v) = &args.to {
-        pairs.push(("to", v.clone()));
+        window.push(("to", v.clone()));
     }
+    if args.follow {
+        return follow(ctx, &c, &pairs, &window, args.limit, args.last_event_id.as_deref()).await;
+    }
+    pairs.extend(window);
     if let Some(v) = args.limit {
         pairs.push(("limit", v.to_string()));
     }
@@ -635,6 +638,7 @@ async fn follow(
     ctx: &Ctx,
     c: &Connection,
     pairs: &[(&str, String)],
+    window: &[(&str, String)],
     limit: Option<u32>,
     last_event_id: Option<&str>,
 ) -> Result<()> {
@@ -648,22 +652,23 @@ async fn follow(
         let mut history = join(&c.endpoint, "events")?;
         history
             .query_pairs_mut()
-            .extend_pairs(pairs.iter().map(|(k, v)| (*k, v.as_str())));
+            .extend_pairs(pairs.iter().chain(window).map(|(k, v)| (*k, v.as_str())));
         if let Some(l) = limit {
             history.query_pairs_mut().append_pair("limit", &l.to_string());
         }
         let answer = ctx.http.get_json(&history, &c.auth).await?;
-        for event in answer["events"].as_array().into_iter().flatten() {
+        let page = answer["events"].as_array().map(Vec::as_slice).unwrap_or_default();
+        for event in page {
             print_event(event, as_lines)?;
             if let Some(id) = event["id"].as_str() {
                 seen.insert(id);
-                last_id = Some(id.to_owned());
             }
             shown += 1;
             if done(shown) {
                 return Ok(());
             }
         }
+        last_id = newest(page);
     }
 
     let mut url = join(&c.endpoint, "events/stream")?;
@@ -685,6 +690,21 @@ async fn follow(
             return Ok(());
         }
     }
+}
+
+/// The id the stream resumes after: the newest event of the history by its `time`, since `GET /events` comes in no
+/// order the spec promises. Without a time that reads as RFC 3339 on any event, the page's order is all there is, and
+/// its last event with an id is taken.
+fn newest(page: &[Value]) -> Option<String> {
+    let id = |event: &Value| event["id"].as_str().map(str::to_owned);
+    page.iter()
+        .filter_map(|event| {
+            let time = event["time"].as_str()?.parse::<jiff::Timestamp>().ok()?;
+            Some((time, id(event)?))
+        })
+        .max_by_key(|(time, _)| *time)
+        .map(|(_, id)| id)
+        .or_else(|| page.iter().rev().find_map(id))
 }
 
 /// The ids of the events already shown, the newest few thousand: enough to skip what a reopened stream replays,
