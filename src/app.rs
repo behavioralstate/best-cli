@@ -631,9 +631,10 @@ fn event_row(event: &Value) -> Vec<String> {
     ]
 }
 
-/// What happened, then what happens next (SPEC Events: load history first, then open the stream): the history page
-/// is printed, the stream is opened after its last event (`Last-Event-ID`) and reopened the same way when the service
-/// closes it, until Ctrl-C or `--limit` events in all. An id already shown is not shown again.
+/// What happened, then what happens next (SPEC Events: load history first, then open the stream): the history page,
+/// bounded by `window` (`--from`, `--to`), is printed, the stream is opened after its newest event (`Last-Event-ID`,
+/// see [`newest`]) and reopened the same way when the service closes it, until Ctrl-C or `--limit` events in all. An
+/// id already shown is not shown again.
 async fn follow(
     ctx: &Ctx,
     c: &Connection,
