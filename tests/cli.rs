@@ -926,6 +926,40 @@ async fn a_public_surface_is_signed_in_without_a_credential() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_name_held_at_a_manifest_now_public_keeps_its_credential() {
+    let rig = Rig::new().await;
+    let public = MockServer::start().await;
+    let base = public.uri();
+    Mock::given(method("GET"))
+        .and(path("/.well-known/best"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"best": {
+            "version": "0.9.17",
+            "services": {"com.example.open": {"version": "1.0.0", "description": "Open", "http": {"endpoint": format!("{base}/")}}},
+            "capabilities": []
+        }})))
+        .mount(&public)
+        .await;
+    let mut all = rig.credentials();
+    all["held"] = json!({
+        "tenantId": TENANT, "apiKey": "sk-the-held-key", "authType": "apikey", "authHeader": "X-Api-Key",
+        "issuedAt": "2026-10-17T10:00:00.000Z", "manifest": format!("{base}/.well-known/best"), "endpoints": {}
+    });
+    std::fs::write(rig.credentials_file(), serde_json::to_string_pretty(&all).unwrap()).unwrap();
+    let before = std::fs::read_to_string(rig.credentials_file()).unwrap();
+    rig.run(&["login", "held", "--manifest", &base])
+        .await
+        .code(1)
+        .stderr(predicate::str::contains("declares no sign-in"))
+        .stderr(predicate::str::contains("best logout held"))
+        .stderr(predicate::str::contains("sk-the-held-key").not());
+    assert_eq!(
+        std::fs::read_to_string(rig.credentials_file()).unwrap(),
+        before,
+        "the held credential is not replaced without an approval"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_credential_at_a_doors_root_opens_the_roots_services_and_heals_on_next_use() {
     let rig = Rig::new().await;
     let door = MockServer::start().await;

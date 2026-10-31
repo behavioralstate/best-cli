@@ -157,7 +157,7 @@ async fn login(ctx: &Ctx, args: LoginArgs) -> Result<()> {
     let root = manifest::resolve(&ctx.http, &args.manifest).await?;
     say!("Resolved {} to {}", args.manifest.trim(), root.url);
 
-    if let Some(existing) = existing {
+    if let Some(existing) = &existing {
         if existing.manifest.as_deref() != Some(root.url.as_str()) {
             bail!(
                 "'{name}' is already signed in at {} ({}). It is left as it is: `best logout {name}` first, or choose another name.",
@@ -165,10 +165,6 @@ async fn login(ctx: &Ctx, args: LoginArgs) -> Result<()> {
                 store.path().display()
             );
         }
-        say!(
-            "'{name}' is signed in at {}: signing in again replaces its credential once you approve.",
-            root.url
-        );
     }
 
     if args.device_code.is_some() && root.token_url()?.is_none() {
@@ -178,6 +174,12 @@ async fn login(ctx: &Ctx, args: LoginArgs) -> Result<()> {
         );
     }
     if args.device_code.is_none() && root.is_public() && root.registration()?.is_none() {
+        if existing.is_some() {
+            bail!(
+                "'{name}' is signed in at {}, which now declares no sign-in, so there is nothing to approve. Its credential is left as it is: `best logout {name}` first to keep it as a public connection.",
+                root.url
+            );
+        }
         let endpoints = manifest::endpoints_for(&ctx.http, &root, None, &Auth::None).await?;
         let entry = Entry {
             tenant_id: None,
@@ -188,6 +190,12 @@ async fn login(ctx: &Ctx, args: LoginArgs) -> Result<()> {
         };
         store.insert(&name, &entry)?;
         return report_signed_in(ctx, &store, &name, &entry, "no credential: the surface is public");
+    }
+    if existing.is_some() {
+        say!(
+            "'{name}' is signed in at {}: signing in again replaces its credential once you approve.",
+            root.url
+        );
     }
 
     let started = match &args.device_code {
