@@ -301,13 +301,48 @@ async fn login_runs_the_device_flow_and_keeps_the_credential_where_best_mcp_does
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_existing_name_is_never_signed_in_again() {
+async fn a_name_signs_in_again_at_the_manifest_it_holds_and_its_credential_is_replaced() {
     let rig = Rig::new().await;
+    let base = rig.server.uri();
+    let mut all = rig.credentials();
+    all[NAME] = json!({
+        "tenantId": TENANT, "apiKey": "sk-the-replaced-key", "authType": "apikey", "authHeader": "X-Api-Key",
+        "issuedAt": "2026-10-17T10:00:00.000Z", "manifest": format!("{base}/.well-known/best"),
+        "endpoints": {"com.example.payroll": format!("{base}/api/best/tenants/{TENANT}")}
+    });
+    std::fs::write(rig.credentials_file(), serde_json::to_string_pretty(&all).unwrap()).unwrap();
+
+    let out = rig
+        .run(&["login", NAME, "--manifest", &base])
+        .await
+        .success()
+        .stderr(predicate::str::contains(format!(
+            "'{NAME}' is signed in at {base}/.well-known/best: signing in again replaces its credential once you approve"
+        )))
+        .stderr(predicate::str::contains(format!("Signed in as '{NAME}' (tenant {TENANT})")))
+        .stderr(predicate::str::contains("sk-the-replaced-key").not())
+        .stdout(predicate::str::contains("sk-the-replaced-key").not());
+    assert_never_shows_key(&out);
+
+    let all = rig.credentials();
+    assert_eq!(all[NAME]["apiKey"], KEY, "the new credential replaced the old one");
+    assert_eq!(all["dotquant.io"], foreign_entry(&base), "the other entry is untouched");
+    assert_eq!(rig.requests("POST", "/auth/device").await.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_name_signed_in_at_another_manifest_is_never_signed_in_again() {
+    let rig = Rig::new().await;
+    let mut all = rig.credentials();
+    all["dotquant.io"]["manifest"] = json!("https://elsewhere.example/.well-known/best");
+    std::fs::write(rig.credentials_file(), serde_json::to_string_pretty(&all).unwrap()).unwrap();
     let before = std::fs::read_to_string(rig.credentials_file()).unwrap();
     rig.run(&["login", "dotquant.io", "--manifest", &rig.server.uri()])
         .await
         .code(1)
-        .stderr(predicate::str::contains("already signed in"))
+        .stderr(predicate::str::contains(
+            "already signed in at https://elsewhere.example/.well-known/best",
+        ))
         .stderr(predicate::str::contains("best logout dotquant.io"));
     assert_eq!(
         std::fs::read_to_string(rig.credentials_file()).unwrap(),

@@ -152,16 +152,24 @@ async fn login(ctx: &Ctx, args: LoginArgs) -> Result<()> {
         )));
     }
     let mut store = Store::open()?;
-    if let Some(existing) = store.get(&name) {
-        bail!(
-            "'{name}' is already signed in at {} ({}). It is left as it is: `best logout {name}` first, or choose another name.",
-            existing.manifest.as_deref().unwrap_or("an endpoint"),
-            store.path().display()
-        );
-    }
+    let existing = store.get(&name);
 
     let root = manifest::resolve(&ctx.http, &args.manifest).await?;
     say!("Resolved {} to {}", args.manifest.trim(), root.url);
+
+    if let Some(existing) = existing {
+        if existing.manifest.as_deref() != Some(root.url.as_str()) {
+            bail!(
+                "'{name}' is already signed in at {} ({}). It is left as it is: `best logout {name}` first, or choose another name.",
+                existing.manifest.as_deref().unwrap_or("an endpoint"),
+                store.path().display()
+            );
+        }
+        say!(
+            "'{name}' is signed in at {}: signing in again replaces its credential once you approve.",
+            root.url
+        );
+    }
 
     if args.device_code.is_some() && root.token_url()?.is_none() {
         bail!(

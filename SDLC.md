@@ -21,7 +21,8 @@
   field, type, path or parameter is written in for a service; nothing is cached across runs. A command's envelope is
   built as best-mcp builds it; a query's answer is printed as the service sent it.
 - The credential store is best-mcp's file, entry for entry: same path, same variable, same members, same name rule. A
-  login never re-onboards or edits a name that exists; what another program wrote passes through untouched; the file
+  login signs a name in again only at the manifest it holds, its entry replaced once the person approves, as best-mcp
+  does; a name held at another manifest is never touched; what another program wrote passes through untouched; the file
   is backed up before every write. A credential is never printed, logged or put in an error, and never follows a
   redirect or goes to a host other than the one its sign-in resolved to.
 - A refusal is the service's own words: code, message and details are printed, never rephrased or swallowed. Exit

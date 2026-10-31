@@ -26,8 +26,9 @@ credential is kept. How work is made and shipped is [SDLC.md](../../SDLC.md); op
   field, a path or a parameter written in for a service. If a service needs something the protocol does not say, that
   is the service's own, not a special case here, and not a reason to change the spec (SDLC.md section 1).
 - **The store is best-mcp's.** Same file, same variable (`BEST_MCP_CREDENTIALS_FILE`), same members in the same order,
-  same name rule. An entry that exists is not signed in again or edited by a login; unknown members and other entries
-  pass through; the file is backed up before every write and is owner-readable only.
+  same name rule. An entry signs in again only at the manifest it holds, replaced whole once the person approves, as
+  best-mcp's `register_agent` does; an entry held at another manifest is not touched; other entries pass through;
+  the file is backed up before every write and is owner-readable only.
 - **No credential in any output.** Not in a message, a table, an error, a log, a test assertion's failure text.
   `Secret` has a redacted `Debug`; keep it that way and keep the type.
 - **A refusal is the service's words.** The error body's code, message and details are printed as they came. An exit

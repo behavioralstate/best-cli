@@ -59,9 +59,9 @@ approving opens an account for you or admits you to a machine someone else runs.
 
 `best` never opens the link itself: approving is yours. A device code you already hold (a registration started on another device, or at an authorization URL this machine
 cannot reach) is redeemed with `best login <name> --manifest <address> --device-code -`, the code typed or piped on stdin
-(`--device-code <code>` works too, but leaves the code in your shell history and the process list); a service that declares no token endpoint is refused at once. A name that is already signed in is
-left as it is
-(`best logout <name>` forgets one). Plain `http://` is accepted only on this machine; `--ca-file <pem>` trusts a
+(`--device-code <code>` works too, but leaves the code in your shell history and the process list); a service that declares no token endpoint is refused at once. A name that is already signed in signs in
+again at the same manifest, its credential replaced once you approve (what to do when the service answers its key
+401); at another manifest it is left as it is (`best logout <name>` forgets one). Plain `http://` is accepted only on this machine; `--ca-file <pem>` trusts a
 certificate the service's operator sent you (a best-peer makes its own).
 
 **3. Read the service.** Everything comes from its catalogues:
