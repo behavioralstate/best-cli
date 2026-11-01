@@ -249,7 +249,7 @@ pub async fn endpoints_for(
         match Url::parse(&endpoint) {
             // Left out like one on another host: the others still work, and the credential does not go in the clear.
             Ok(u) if host_of(&u) == host && check_scheme(&u, &endpoint).is_err() => {
-                elsewhere.push(format!("{id} ({endpoint}, plain http)"));
+                elsewhere.push(format!("{id} ({endpoint}, not over https)"));
             }
             Ok(u) if host_of(&u) == host => kept.push((id, endpoint)),
             Ok(u) => elsewhere.push(format!("{id} ({})", host_of(&u))),
@@ -261,7 +261,13 @@ pub async fn endpoints_for(
             bail!("the manifest names no service endpoint");
         }
         bail!(
-            "every service endpoint the manifest names is on another host than {host} or over plain http ({}); the credential is not sent there",
+            "every service endpoint the manifest names is on another host than {host} or not over https ({}); the credential is not sent there",
+            elsewhere.join(", ")
+        );
+    }
+    if !elsewhere.is_empty() {
+        eprintln!(
+            "Left out, the credential is not sent there: {}. `best logout` and `best login` again once the service has moved.",
             elsewhere.join(", ")
         );
     }
@@ -341,7 +347,7 @@ mod tests {
     async fn an_endpoint_over_plain_http_is_refused_before_a_credential_goes_there() {
         let root = manifest(json!({"best": {"services": {"s": {"http": {"endpoint": "http://api.example.com/x"}}}}}));
         let refused = endpoints_for(&Http::new(None).unwrap(), &root, None, &Auth::None).await;
-        assert!(refused.unwrap_err().to_string().contains("plain http"));
+        assert!(refused.unwrap_err().to_string().contains("not over https"));
     }
 
     #[tokio::test]
