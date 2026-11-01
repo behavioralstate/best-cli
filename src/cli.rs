@@ -30,7 +30,8 @@ pub struct Global {
     pub ca_file: Option<PathBuf>,
 
     /// Work on another tenant of the connection's service with the same credential, such as a workspace you are in:
-    /// its id, as the service lists it. Read from the manifest the connection signed in at, for this run only.
+    /// its id, as the service lists it. Read from the manifest the connection signed in at, for this run only. Refused by
+    /// login, logout, connections and manifest, which are about a whole connection.
     #[arg(long, global = true, value_name = "ID")]
     pub tenant: Option<String>,
 }

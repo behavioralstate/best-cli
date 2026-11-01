@@ -392,6 +392,46 @@ async fn another_tenant(rig: &Rig, endpoint: String) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn tenant_is_refused_where_it_means_nothing_and_logout_forgets_nothing() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+    let base = rig.server.uri();
+    let before = rig.credentials();
+
+    for args in [
+        vec!["--tenant", "workspace-1", "logout", NAME],
+        vec!["--tenant", "workspace-1", "connections"],
+        vec!["--tenant", "workspace-1", "manifest", NAME],
+        vec![
+            "--tenant",
+            "workspace-1",
+            "login",
+            "another",
+            "--manifest",
+            base.as_str(),
+        ],
+    ] {
+        rig.run(&args)
+            .await
+            .failure()
+            .stderr(predicate::str::contains("--tenant has no meaning"));
+    }
+
+    assert_eq!(rig.credentials(), before);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tenant_id_of_dots_alone_is_told_what_an_id_is() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+
+    rig.run(&["--tenant", "..", "commands", NAME])
+        .await
+        .failure()
+        .stderr(predicate::str::contains("more than dots"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn tenant_works_on_another_tenant_with_the_same_credential_and_keeps_nothing() {
     let rig = Rig::new().await;
     rig.signed_in();

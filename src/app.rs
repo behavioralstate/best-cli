@@ -34,6 +34,19 @@ struct Connection {
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
+    // Said rather than ignored: `--tenant ws logout work` would otherwise forget the one credential that opens every tenant.
+    let whole = match cli.command {
+        Command::Login(_) => Some("login"),
+        Command::Logout { .. } => Some("logout"),
+        Command::Connections => Some("connections"),
+        Command::Manifest { .. } => Some("manifest"),
+        _ => None,
+    };
+    if let (Some(command), Some(_)) = (whole, cli.global.tenant.as_deref()) {
+        bail!(Usage(format!(
+            "--tenant has no meaning on `best {command}`, which is about a whole connection and not one of its tenants: leave it out. Nothing was done."
+        )));
+    }
     let ctx = Ctx {
         http: Http::new(cli.global.ca_file.as_deref())?,
         json: cli.global.json,
@@ -104,7 +117,7 @@ async fn connection(ctx: &Ctx, name: &str) -> Result<Connection> {
 async fn tenant_endpoints(ctx: &Ctx, name: &str, entry: &Entry, tenant: &str) -> Result<Vec<(String, String)>> {
     if !manifest::is_tenant_id(tenant) {
         bail!(Usage(format!(
-            "--tenant '{tenant}' cannot be a tenant's id: letters, digits, '_', '.' and '-'"
+            "--tenant '{tenant}' cannot be a tenant's id: an id is letters, digits, '_', '.' and '-', and more than dots. Give it as the service lists it."
         )));
     }
     let Some(address) = entry.manifest.as_deref() else {

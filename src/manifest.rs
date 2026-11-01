@@ -247,10 +247,11 @@ pub async fn endpoints_for(
     let mut elsewhere = Vec::new();
     for (id, endpoint) in services {
         match Url::parse(&endpoint) {
-            Ok(u) if host_of(&u) == host => {
-                check_scheme(&u, &endpoint)?;
-                kept.push((id, endpoint));
+            // Left out like one on another host: the others still work, and the credential does not go in the clear.
+            Ok(u) if host_of(&u) == host && check_scheme(&u, &endpoint).is_err() => {
+                elsewhere.push(format!("{id} ({endpoint}, plain http)"));
             }
+            Ok(u) if host_of(&u) == host => kept.push((id, endpoint)),
             Ok(u) => elsewhere.push(format!("{id} ({})", host_of(&u))),
             Err(_) => elsewhere.push(format!("{id} ({endpoint})")),
         }
@@ -260,7 +261,7 @@ pub async fn endpoints_for(
             bail!("the manifest names no service endpoint");
         }
         bail!(
-            "every service endpoint the manifest names is on another host than {host} ({}); the credential is not sent there",
+            "every service endpoint the manifest names is on another host than {host} or over plain http ({}); the credential is not sent there",
             elsewhere.join(", ")
         );
     }
@@ -341,6 +342,18 @@ mod tests {
         let root = manifest(json!({"best": {"services": {"s": {"http": {"endpoint": "http://api.example.com/x"}}}}}));
         let refused = endpoints_for(&Http::new(None).unwrap(), &root, None, &Auth::None).await;
         assert!(refused.unwrap_err().to_string().contains("plain http"));
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_over_plain_http_is_left_out_and_the_others_still_work() {
+        let root = manifest(json!({"best": {"services": {
+            "a": {"http": {"endpoint": "https://api.example.com/a"}},
+            "b": {"http": {"endpoint": "http://api.example.com/b"}}
+        }}}));
+        let kept = endpoints_for(&Http::new(None).unwrap(), &root, None, &Auth::None)
+            .await
+            .unwrap();
+        assert_eq!(kept, vec![("a".to_owned(), "https://api.example.com/a".to_owned())]);
     }
 
     #[test]
