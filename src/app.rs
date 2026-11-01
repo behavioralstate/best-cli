@@ -111,6 +111,13 @@ async fn tenant_endpoints(ctx: &Ctx, name: &str, entry: &Entry, tenant: &str) ->
         bail!("'{name}' holds no manifest to find tenant '{tenant}' in: `best logout {name}`, then sign in again");
     };
     let root = manifest::resolve(&ctx.http, address).await?;
+    if root.host() != entry.host() {
+        bail!(
+            "'{name}' signed in at {}, and its manifest now answers from {}: the credential is not sent there. Nothing was sent. `best login {name}` again if the service has moved.",
+            entry.host(),
+            root.host()
+        );
+    }
     if root.tenant_template().is_none() {
         bail!(
             "{} declares no tenants, so there is no tenant '{tenant}' to work on: leave out --tenant",

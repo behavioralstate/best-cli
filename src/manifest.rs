@@ -215,6 +215,7 @@ async fn fetch_with(http: &Http, url: &Url, auth: &Auth) -> Result<Manifest> {
 /// answers for a credential at its root) names no tenant manifest.
 pub fn is_tenant_id(id: &str) -> bool {
     !id.is_empty()
+        && !id.chars().all(|c| c == '.')
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
@@ -231,6 +232,7 @@ pub async fn endpoints_for(
         (Some(template), Some(tenant)) if is_tenant_id(tenant) => {
             let tenant_url = Url::parse(&template.replace("{tenantId}", &urlencode(tenant)))
                 .with_context(|| format!("tenants.manifest '{template}' does not expand to a URL"))?;
+            check_scheme(&tenant_url, tenant_url.as_str())?;
             if host_of(&tenant_url) != host {
                 bail!(
                     "the tenant manifest is on {}, not on {host} where this sign-in resolved; the credential is not sent there",
@@ -245,7 +247,10 @@ pub async fn endpoints_for(
     let mut elsewhere = Vec::new();
     for (id, endpoint) in services {
         match Url::parse(&endpoint) {
-            Ok(u) if host_of(&u) == host => kept.push((id, endpoint)),
+            Ok(u) if host_of(&u) == host => {
+                check_scheme(&u, &endpoint)?;
+                kept.push((id, endpoint));
+            }
             Ok(u) => elsewhere.push(format!("{id} ({})", host_of(&u))),
             Err(_) => elsewhere.push(format!("{id} ({endpoint})")),
         }
@@ -323,6 +328,19 @@ mod tests {
         assert!(is_tenant_id("be9e0176-d898-40a0-b558-eaa6f748b6aa"));
         assert!(!is_tenant_id("127.0.0.1:7791"), "a door's host is not a tenant");
         assert!(!is_tenant_id(""));
+        assert!(
+            !is_tenant_id("."),
+            "a dot segment is no tenant: it would change the path"
+        );
+        assert!(!is_tenant_id(".."));
+        assert!(is_tenant_id("a.b"));
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_over_plain_http_is_refused_before_a_credential_goes_there() {
+        let root = manifest(json!({"best": {"services": {"s": {"http": {"endpoint": "http://api.example.com/x"}}}}}));
+        let refused = endpoints_for(&Http::new(None).unwrap(), &root, None, &Auth::None).await;
+        assert!(refused.unwrap_err().to_string().contains("plain http"));
     }
 
     #[test]

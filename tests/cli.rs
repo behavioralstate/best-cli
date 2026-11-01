@@ -425,10 +425,12 @@ async fn tenant_is_refused_in_words_when_it_names_nothing_a_credential_may_reach
     let rig = Rig::new().await;
     rig.signed_in();
 
-    rig.run(&["--tenant", "a/b", "commands", NAME])
-        .await
-        .code(2)
-        .stderr(predicate::str::contains("cannot be a tenant's id"));
+    for id in ["a/b", "..", "."] {
+        rig.run(&["--tenant", id, "commands", NAME])
+            .await
+            .code(2)
+            .stderr(predicate::str::contains("cannot be a tenant's id"));
+    }
 
     another_tenant(
         &rig,
@@ -441,6 +443,49 @@ async fn tenant_is_refused_in_words_when_it_names_nothing_a_credential_may_reach
         .failure()
         .stderr(predicate::str::contains("on another host"));
     assert_never_shows_key(&out);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tenant_sends_nothing_when_the_manifest_signed_in_at_now_answers_from_another_host() {
+    let rig = Rig::new().await;
+    let base = rig.server.uri();
+    let other = MockServer::start().await;
+    let elsewhere = other.uri();
+    Mock::given(method("GET"))
+        .and(path("/.well-known/best"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"best": {
+            "version": "0.9.17",
+            "tenants": {"manifest": format!("{elsewhere}/.well-known/best/{{tenantId}}")},
+            "services": {"com.example.payroll": {"version": "1.0.0", "description": "Payroll", "http": {"endpoint": format!("{elsewhere}/x")}}},
+            "capabilities": []
+        }})))
+        .mount(&other)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/moved/.well-known/best"))
+        .respond_with(
+            ResponseTemplate::new(302).insert_header("location", format!("{elsewhere}/.well-known/best").as_str()),
+        )
+        .mount(&rig.server)
+        .await;
+    let mut all = rig.credentials();
+    all[NAME] = json!({
+        "tenantId": TENANT, "apiKey": KEY, "authType": "apikey", "authHeader": "X-Api-Key",
+        "manifest": format!("{base}/moved/.well-known/best"),
+        "endpoints": {"com.example.payroll": format!("{base}/api/best/tenants/{TENANT}")}
+    });
+    std::fs::write(rig.credentials_file(), serde_json::to_string_pretty(&all).unwrap()).unwrap();
+
+    rig.run(&["--tenant", "workspace-1", "commands", NAME])
+        .await
+        .failure()
+        .stderr(predicate::str::contains("the credential is not sent there"));
+
+    let asked = other.received_requests().await.unwrap();
+    assert!(
+        asked.iter().all(|r| !r.headers.contains_key("x-api-key")),
+        "the key went to the other host"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
