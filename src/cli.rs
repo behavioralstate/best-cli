@@ -28,6 +28,11 @@ pub struct Global {
     /// A PEM file of certificates to trust besides the system's: a service's self-made certificate.
     #[arg(long, global = true, env = "BEST_CA_FILE", value_name = "PEM")]
     pub ca_file: Option<PathBuf>,
+
+    /// Work on another tenant of the connection's service with the same credential, such as a workspace you are in:
+    /// its id, as the service lists it. Read from the manifest the connection signed in at, for this run only.
+    #[arg(long, global = true, env = "BEST_TENANT", value_name = "ID")]
+    pub tenant: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]

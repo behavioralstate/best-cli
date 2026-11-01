@@ -377,6 +377,99 @@ async fn without_a_connection_the_person_is_told_how_to_sign_in_and_exit_is_3() 
         .stderr(predicate::str::contains("best login nothere --manifest"));
 }
 
+/// A tenant of the same service the connection's credential also opens, as a person's workspace is.
+async fn another_tenant(rig: &Rig, endpoint: String) {
+    Mock::given(method("GET"))
+        .and(path("/.well-known/best/workspace-1"))
+        .and(header("X-Api-Key", KEY))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"best": {
+            "version": "0.9.17",
+            "services": {"com.example.payroll": {"version": "1.0.0", "description": "Payroll", "http": {"endpoint": endpoint}}},
+            "capabilities": []
+        }})))
+        .mount(&rig.server)
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tenant_works_on_another_tenant_with_the_same_credential_and_keeps_nothing() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+    let base = rig.server.uri();
+    another_tenant(&rig, format!("{base}/api/best/tenants/workspace-1")).await;
+    Mock::given(method("GET"))
+        .and(path("/api/best/tenants/workspace-1/commands"))
+        .and(header("X-Api-Key", KEY))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"commands": [
+            {"schema": "invite-person", "version": "1.0", "description": "The workspace's own.",
+             "dataschema": format!("{base}/api/best/tenants/workspace-1/commands/invite-person/1.0")}
+        ]})))
+        .mount(&rig.server)
+        .await;
+    let before = rig.credentials();
+
+    rig.run(&["--tenant", "workspace-1", "commands", NAME])
+        .await
+        .success()
+        .stdout(predicate::str::contains("invite-person"));
+    rig.run(&["commands", NAME, "--tenant", "workspace-1"])
+        .await
+        .success()
+        .stdout(predicate::str::contains("invite-person"));
+
+    assert_eq!(rig.credentials(), before, "the store keeps what the sign-in opened");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tenant_is_refused_in_words_when_it_names_nothing_a_credential_may_reach() {
+    let rig = Rig::new().await;
+    rig.signed_in();
+
+    rig.run(&["--tenant", "a/b", "commands", NAME])
+        .await
+        .code(2)
+        .stderr(predicate::str::contains("cannot be a tenant's id"));
+
+    another_tenant(
+        &rig,
+        "https://other.example.com/api/best/tenants/workspace-1".to_owned(),
+    )
+    .await;
+    let out = rig
+        .run(&["--tenant", "workspace-1", "commands", NAME])
+        .await
+        .failure()
+        .stderr(predicate::str::contains("on another host"));
+    assert_never_shows_key(&out);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tenant_on_a_service_that_declares_no_tenants_says_so() {
+    let rig = Rig::new().await;
+    let base = rig.server.uri();
+    let mut all = rig.credentials();
+    all[NAME] = json!({
+        "tenantId": TENANT, "apiKey": KEY, "authType": "apikey", "authHeader": "X-Api-Key",
+        "manifest": format!("{base}/single/.well-known/best"),
+        "endpoints": {"com.example.payroll": format!("{base}/single")}
+    });
+    std::fs::write(rig.credentials_file(), serde_json::to_string_pretty(&all).unwrap()).unwrap();
+    Mock::given(method("GET"))
+        .and(path("/single/.well-known/best"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"best": {
+            "version": "0.9.17",
+            "services": {"com.example.payroll": {"version": "1.0.0", "description": "Payroll", "http": {"endpoint": format!("{base}/single")}}},
+            "capabilities": []
+        }})))
+        .mount(&rig.server)
+        .await;
+
+    rig.run(&["--tenant", "workspace-1", "commands", NAME])
+        .await
+        .failure()
+        .stderr(predicate::str::contains("declares no tenants"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_catalogues_are_listed_with_descriptions_and_impact() {
     let rig = Rig::new().await;

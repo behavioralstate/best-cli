@@ -213,7 +213,7 @@ async fn fetch_with(http: &Http, url: &Url, auth: &Auth) -> Result<Manifest> {
 /// alone the credential may go (SPEC Name Resolution).
 /// A tenant id that can be a path segment, as best-mcp accepts one; anything else (a host with a port, as a door
 /// answers for a credential at its root) names no tenant manifest.
-fn is_tenant_id(id: &str) -> bool {
+pub fn is_tenant_id(id: &str) -> bool {
     !id.is_empty()
         && id
             .chars()

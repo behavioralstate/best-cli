@@ -79,6 +79,11 @@ best events dotquant --follow --type OrderFilled   # what happened, then what ha
 best watch lab-peer get-hardware-state get-workloads   # the answers, the events as they come, an answer again when it moved
 ```
 
+A service with several tenants may let one credential open more than one, such as a workspace you work in. `--tenant`
+works on another with the same connection, for that run: `best --tenant 0735cfd1-… query dotquant list-brokers`
+(`BEST_TENANT` is the same). The address comes from the manifest you signed in at, and the credential goes to no other
+host. Leave it out and you are on the tenant you signed in as.
+
 `best watch` keeps a service in view until Ctrl-C: each query's answer once, under its name; then the live stream, one
 line per event; and a query's answer again whenever it moved. The answers are read again shortly after each event
 and every five seconds (`--every`), since some readings change with no event, such as a card its owner is using.

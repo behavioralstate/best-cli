@@ -22,6 +22,7 @@ pub const SOURCE: &str = "urn:best-cli";
 struct Ctx {
     http: Http,
     json: bool,
+    tenant: Option<String>,
 }
 
 /// A connection as a command uses it: its entry, and the one endpoint the name (or `name/service`) picks.
@@ -36,6 +37,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     let ctx = Ctx {
         http: Http::new(cli.global.ca_file.as_deref())?,
         json: cli.global.json,
+        tenant: cli.global.tenant,
     };
     match cli.command {
         Command::Login(args) => login(&ctx, args).await,
@@ -85,6 +87,9 @@ async fn connection(ctx: &Ctx, name: &str) -> Result<Connection> {
             .with_context(|| format!("'{bare}' is signed in but its endpoints could not be resolved"))?;
         store.insert(bare, &entry)?;
     }
+    if let Some(tenant) = ctx.tenant.as_deref() {
+        entry.endpoints = tenant_endpoints(ctx, bare, &entry, tenant).await?;
+    }
     let (service, endpoint) = entry.endpoint(service)?;
     Ok(Connection {
         name: bare.to_owned(),
@@ -92,6 +97,29 @@ async fn connection(ctx: &Ctx, name: &str) -> Result<Connection> {
         endpoint,
         auth: entry.auth,
     })
+}
+
+/// `--tenant`: the endpoints of another tenant of the service, from the manifest the connection signed in at and for
+/// this run alone. The store keeps what the sign-in opened; the credential goes to the sign-in's host or nowhere.
+async fn tenant_endpoints(ctx: &Ctx, name: &str, entry: &Entry, tenant: &str) -> Result<Vec<(String, String)>> {
+    if !manifest::is_tenant_id(tenant) {
+        bail!(Usage(format!(
+            "--tenant '{tenant}' cannot be a tenant's id: letters, digits, '_', '.' and '-'"
+        )));
+    }
+    let Some(address) = entry.manifest.as_deref() else {
+        bail!("'{name}' holds no manifest to find tenant '{tenant}' in: `best logout {name}`, then sign in again");
+    };
+    let root = manifest::resolve(&ctx.http, address).await?;
+    if root.tenant_template().is_none() {
+        bail!(
+            "{} declares no tenants, so there is no tenant '{tenant}' to work on: leave out --tenant",
+            root.host()
+        );
+    }
+    manifest::endpoints_for(&ctx.http, &root, Some(tenant), &entry.auth)
+        .await
+        .with_context(|| format!("tenant '{tenant}' of '{name}' could not be resolved"))
 }
 
 fn connections(ctx: &Ctx) -> Result<()> {
