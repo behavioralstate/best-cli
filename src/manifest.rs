@@ -64,7 +64,7 @@ fn stored_host(manifest: &str) -> Option<String> {
     } else {
         Url::parse(&format!("https://{manifest}"))
     };
-    parsed.ok().map(|m| host_of(&m))
+    parsed.ok().map(|m| host_of(&m)).filter(|host| !host.is_empty())
 }
 
 fn is_loopback(url: &Url) -> bool {

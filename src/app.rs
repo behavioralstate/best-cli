@@ -396,7 +396,7 @@ fn report_signed_in(ctx: &Ctx, store: &Store, name: &str, entry: &Entry, how: &s
         entry.host()
     );
     say!(
-        "The credential is in {}, where best-mcp finds it too. It is printed only for a pipe, by `best credential`.",
+        "The credential is in {}, where best-mcp finds it too. It is printed only when asked, by `best credential`.",
         store.path().display()
     );
     for (service, endpoint) in &entry.endpoints {

@@ -71,7 +71,7 @@ For you, the agent, not the person: read this manifest with an HTTP request; nev
 Give the person this link, verification_uri_complete (or verification_uri and user_code), to open in their own browser, where they sign in and approve you. Never open it yourself or in a browser you control: approving is theirs. Then poll tokenUrl no faster than interval, with a form of grant_type=urn:ietf:params:oauth:grant-type:device_code, device_code and client_id. Its answer carries a secret credential and, in name, the connection's name: save the credential straight to your client's credential store or to a file only the person can read, under that name, and never put it in a message, a command or any output: read the rest of the answer without it.
 
 Signed in as 'lab-peer' (tenant 127.0.0.1:7792) at 127.0.0.1:7792; the credential is durable until revoked.
-The credential is in C:\Users\Riccardo\.best-mcp\credentials.json, where best-mcp finds it too. It is never printed.
+The credential is in C:\Users\Riccardo\.best-mcp\credentials.json, where best-mcp finds it too. It is printed only when asked, by `best credential`.
   io.best.agents  http://127.0.0.1:7792
 Next: `best queries lab-peer` and `best commands lab-peer`.
 
