@@ -52,7 +52,7 @@ impl Secret {
         Self(value)
     }
 
-    /// The value, for the one place that puts it in a header.
+    /// The value, for the one place that puts it in a header and the one that gives it to a pipe.
     pub fn expose(&self) -> &str {
         &self.0
     }

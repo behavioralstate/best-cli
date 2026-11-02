@@ -39,6 +39,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Login(_) => Some("login"),
         Command::Logout { .. } => Some("logout"),
         Command::Connections => Some("connections"),
+        Command::Credential { .. } => Some("credential"),
         Command::Manifest { .. } => Some("manifest"),
         _ => None,
     };
@@ -56,6 +57,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Login(args) => login(&ctx, args).await,
         Command::Logout { name } => logout(&ctx, &name),
         Command::Connections => connections(&ctx),
+        Command::Credential { name, force } => credential(&ctx, &name, force),
         Command::Commands { name, filter } => list(&ctx, &name, Kind::Commands, filter.as_deref()).await,
         Command::Queries { name, filter } => list(&ctx, &name, Kind::Queries, filter.as_deref()).await,
         Command::Schema {
@@ -402,6 +404,34 @@ fn report_signed_in(ctx: &Ctx, store: &Store, name: &str, entry: &Entry, how: &s
     }
     say!("Next: `best queries {name}` and `best commands {name}`.");
     Ok(())
+}
+
+/// What a program needs of the connection to take the credential from a pipe, so it never has to read the store's file.
+fn credential(ctx: &Ctx, name: &str, force: bool) -> Result<()> {
+    let store = Store::open()?;
+    let Some(entry) = store.get(name) else {
+        bail!(NotSignedIn(format!(
+            "no connection named '{name}': `best connections` lists them, `best login {name} --manifest <address>` signs in"
+        )));
+    };
+    let secret = held_credential(name, &entry.auth, std::io::stdout().is_terminal(), force)?;
+    if ctx.json {
+        return output::json(&json!({"name": name, "credential": secret}));
+    }
+    println!("{secret}");
+    Ok(())
+}
+
+fn held_credential<'a>(name: &str, auth: &'a Auth, on_terminal: bool, force: bool) -> Result<&'a str> {
+    if on_terminal && !force {
+        bail!(Usage(format!(
+            "`best credential {name}` prints a secret, so it is for a pipe: `best credential {name} | docker login <host> --username <id> --password-stdin`. On a terminal, --force prints it where anyone looking can read it. Nothing was printed."
+        )));
+    }
+    match auth {
+        Auth::None => bail!("'{name}' holds no credential: its service is public. Nothing was printed."),
+        Auth::Bearer(secret) | Auth::ApiKey { key: secret, .. } => Ok(secret.expose()),
+    }
 }
 
 fn logout(ctx: &Ctx, name: &str) -> Result<()> {
@@ -1162,6 +1192,15 @@ fn hostname() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_credential_is_for_a_pipe_unless_the_person_forces_it_on_a_terminal() {
+        let auth = Auth::Bearer(credentials::Secret::new("sk-held".into()));
+        assert_eq!(held_credential("work", &auth, false, false).unwrap(), "sk-held");
+        assert_eq!(held_credential("work", &auth, true, true).unwrap(), "sk-held");
+        let refused = held_credential("work", &auth, true, false).unwrap_err().to_string();
+        assert!(refused.contains("--force") && !refused.contains("sk-held"), "{refused}");
+    }
+
     use super::*;
 
     #[test]

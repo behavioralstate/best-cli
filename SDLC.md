@@ -23,7 +23,7 @@
 - The credential store is best-mcp's file, entry for entry: same path, same variable, same members, same name rule. A
   login signs a name in again only at the manifest it holds, its entry replaced once the person approves, as best-mcp
   does; a name held at another manifest is never touched; what another program wrote passes through untouched; the file
-  is backed up before every write. A credential is never printed, logged or put in an error, and never follows a
+  is backed up before every write. A credential is never logged or put in an error, printed only by `best credential` for a pipe, and never follows a
   redirect or goes to a host other than the one its sign-in resolved to.
 - A refusal is the service's own words: code, message and details are printed, never rephrased or swallowed. Exit
   codes mean something, `--json` is on every command, and nothing is coloured or animated.
@@ -71,4 +71,4 @@
 - No release of a commit the review gate has not passed; no tag made by hand.
 - No force-pushes, no push with an unfixed review finding or a red check.
 - No plan file, no `TODO`, no dated narrative: open work is an issue.
-- No service-specific code, no catalogue cache, no credential in any output.
+- No service-specific code, no catalogue cache, no credential in any output but `best credential`'s.

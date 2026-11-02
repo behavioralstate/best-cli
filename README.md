@@ -82,8 +82,12 @@ best watch lab-peer get-hardware-state get-workloads   # the answers, the events
 A service with several tenants may let one credential open more than one, such as a workspace you work in. `--tenant`
 works on another with the same connection, for that run: `best --tenant 0735cfd1-… query dotquant list-brokers`
 The address comes from the manifest you signed in at, and the credential goes to no other
-host. Leave it out and you are on the tenant you signed in as. `login`, `logout`, `connections` and `manifest` are about a
-whole connection, so they refuse it.
+host. Leave it out and you are on the tenant you signed in as. `login`, `logout`, `connections`, `credential` and `manifest`
+are about a whole connection, so they refuse it.
+
+`best credential <name>` prints a connection's credential alone, for a tool that takes it from a pipe, so nothing has to
+read the credentials file: `best credential work | docker login registry.example.com --username <id> --password-stdin`. On
+a terminal it refuses unless `--force`.
 
 `best watch` keeps a service in view until Ctrl-C: each query's answer once, under its name; then the live stream, one
 line per event; and a query's answer again whenever it moved. The answers are read again shortly after each event

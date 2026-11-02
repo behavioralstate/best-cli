@@ -1103,6 +1103,25 @@ async fn a_public_surface_is_signed_in_without_a_credential() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn the_credential_goes_to_a_pipe_alone() {
+    let rig = Rig::new().await;
+    rig.login().await;
+    rig.run(&["credential", NAME])
+        .await
+        .success()
+        .stdout(format!("{KEY}\n"));
+    let answer = rig.run(&["--json", "credential", NAME]).await.success();
+    let answer: Value = serde_json::from_slice(&answer.get_output().stdout).unwrap();
+    assert_eq!(answer, json!({"name": NAME, "credential": KEY}));
+    rig.run(&["credential", "nobody"]).await.code(3);
+    rig.run(&["--tenant", "other", "credential", NAME])
+        .await
+        .code(2)
+        .stderr(predicate::str::contains("--tenant has no meaning"))
+        .stdout("");
+}
+
 /// An entry in the store as an older sign-in or another program left it.
 fn store_entry(rig: &Rig, name: &str, manifest: &str, endpoint: &str) {
     let mut all = rig.credentials();
