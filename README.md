@@ -48,7 +48,7 @@ Open this link in your own browser, sign in and approve:
 The code is 8BB9-CB44. Waiting for your approval (the code expires in 15 minutes)…
 
 Signed in as 'dotquant' (tenant 67e04942-…) at baas.dotquant.io; the credential is durable until revoked.
-The credential is in /home/ada/.best-mcp/credentials.json, where best-mcp finds it too. It is never printed.
+The credential is in /home/ada/.best-mcp/credentials.json, where best-mcp finds it too. It is printed only for a pipe, by `best credential`.
   io.dotquant.trading  https://baas.dotquant.io/api/best/tenants/67e04942-…
 Next: `best queries dotquant` and `best commands dotquant`.
 ```

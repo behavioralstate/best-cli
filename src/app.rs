@@ -1,6 +1,6 @@
 //! The commands as the person runs them, each on top of the modules: nothing here knows one service from another.
 
-use std::io::{IsTerminal, Read};
+use std::io::{IsTerminal, Read, Write};
 
 use anyhow::{bail, Context, Result};
 use futures_util::StreamExt;
@@ -109,7 +109,7 @@ async fn connection(ctx: &Ctx, name: &str) -> Result<Connection> {
     if !matches!(entry.auth, Auth::None) {
         if let Some(problem) = manifest::stored_endpoint_problem(&endpoint, entry.manifest.as_deref()) {
             bail!(
-                "'{bare}' holds a service endpoint the credential is not sent to: {problem}. Nothing was sent. `best login {bare} --manifest <address>` takes the endpoints the service names now, if they are over https on its own host; if not, the service has to move them."
+                "'{bare}' holds a service endpoint the credential is not sent to: {problem}. Nothing was sent. If the service now names its endpoints over https on its own host, `best login {bare} --manifest <address>` takes them (`best logout {bare}` first if it says it is signed in elsewhere); if not, the service has to move them."
             );
         }
     }
@@ -396,7 +396,7 @@ fn report_signed_in(ctx: &Ctx, store: &Store, name: &str, entry: &Entry, how: &s
         entry.host()
     );
     say!(
-        "The credential is in {}, where best-mcp finds it too. It is never printed.",
+        "The credential is in {}, where best-mcp finds it too. It is printed only for a pipe, by `best credential`.",
         store.path().display()
     );
     for (service, endpoint) in &entry.endpoints {
@@ -409,6 +409,7 @@ fn report_signed_in(ctx: &Ctx, store: &Store, name: &str, entry: &Entry, how: &s
 /// What a program needs of the connection to take the credential from a pipe, so it never has to read the store's file.
 fn credential(ctx: &Ctx, name: &str, force: bool) -> Result<()> {
     let store = Store::open()?;
+    let name = name.split_once('/').map_or(name, |(bare, _)| bare);
     let Some(entry) = store.get(name) else {
         bail!(NotSignedIn(format!(
             "no connection named '{name}': `best connections` lists them, `best login {name} --manifest <address>` signs in"
@@ -418,20 +419,21 @@ fn credential(ctx: &Ctx, name: &str, force: bool) -> Result<()> {
     if ctx.json {
         return output::json(&json!({"name": name, "credential": secret}));
     }
-    println!("{secret}");
+    writeln!(std::io::stdout(), "{secret}")?;
     Ok(())
 }
 
 fn held_credential<'a>(name: &str, auth: &'a Auth, on_terminal: bool, force: bool) -> Result<&'a str> {
+    let secret = match auth {
+        Auth::None => bail!("'{name}' holds no credential. Nothing was printed."),
+        Auth::Bearer(secret) | Auth::ApiKey { key: secret, .. } => secret.expose(),
+    };
     if on_terminal && !force {
         bail!(Usage(format!(
             "`best credential {name}` prints a secret, so it is for a pipe: `best credential {name} | docker login <host> --username <id> --password-stdin`. On a terminal, --force prints it where anyone looking can read it. Nothing was printed."
         )));
     }
-    match auth {
-        Auth::None => bail!("'{name}' holds no credential: its service is public. Nothing was printed."),
-        Auth::Bearer(secret) | Auth::ApiKey { key: secret, .. } => Ok(secret.expose()),
-    }
+    Ok(secret)
 }
 
 fn logout(ctx: &Ctx, name: &str) -> Result<()> {
@@ -1199,6 +1201,10 @@ mod tests {
         assert_eq!(held_credential("work", &auth, true, true).unwrap(), "sk-held");
         let refused = held_credential("work", &auth, true, false).unwrap_err().to_string();
         assert!(refused.contains("--force") && !refused.contains("sk-held"), "{refused}");
+        let none = held_credential("open", &Auth::None, true, false)
+            .unwrap_err()
+            .to_string();
+        assert!(none.contains("holds no credential"), "{none}");
     }
 
     use super::*;

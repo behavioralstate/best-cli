@@ -11,7 +11,7 @@ credential is kept. How work is made and shipped is [SDLC.md](../../SDLC.md); op
 |---|---|
 | `src/cli.rs` | The command line as the person types it (clap). Every flag's help is a sentence a person reads. |
 | `src/app.rs` | The commands on top of the modules: login, logout, connections, commands, queries, schema, query, send, events, workflows, manifest. Nothing here knows one service from another. |
-| `src/credentials.rs` | best-mcp's credentials file, read and written entry for entry. The credential is a `Secret` that leaves the module only as a request header. |
+| `src/credentials.rs` | best-mcp's credentials file, read and written entry for entry. The credential is a `Secret` that leaves the module only as a request header, and through `best credential` to a pipe. |
 | `src/manifest.rs` | An address to a manifest, the registration block, the endpoints a credential opens (tenant manifest when the host is multi-tenant). |
 | `src/signin.rs` | The device flow (RFC 8628). The device code never leaves it. |
 | `src/catalogue.rs` | The catalogues and how a name on the command line finds an entry. |
@@ -29,7 +29,8 @@ credential is kept. How work is made and shipped is [SDLC.md](../../SDLC.md); op
   same name rule. An entry signs in again only at the manifest it holds, replaced whole once the person approves, as
   best-mcp's `register_agent` does; an entry held at another manifest is not touched; other entries pass through;
   the file is backed up before every write and is owner-readable only.
-- **No credential in any output.** Not in a message, a table, an error, a log, a test assertion's failure text.
+- **No credential in any output** but `best credential`'s, which is for a pipe and refuses a terminal without `--force`.
+  Not in a message, a table, an error, a log, a test assertion's failure text.
   `Secret` has a redacted `Debug`; keep it that way and keep the type.
 - **A refusal is the service's words.** The error body's code, message and details are printed as they came. An exit
   code is chosen from the status, never from the text.

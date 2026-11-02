@@ -1111,6 +1111,10 @@ async fn the_credential_goes_to_a_pipe_alone() {
         .await
         .success()
         .stdout(format!("{KEY}\n"));
+    rig.run(&["credential", &format!("{NAME}/com.example.payroll")])
+        .await
+        .success()
+        .stdout(format!("{KEY}\n"));
     let answer = rig.run(&["--json", "credential", NAME]).await.success();
     let answer: Value = serde_json::from_slice(&answer.get_output().stdout).unwrap();
     assert_eq!(answer, json!({"name": NAME, "credential": KEY}));
@@ -1154,7 +1158,6 @@ async fn a_stored_endpoint_not_over_https_gets_no_credential() {
             .stderr(predicate::str::contains("is not over https"))
             .stderr(predicate::str::contains("Nothing was sent"))
             .stderr(predicate::str::contains("best login clear --manifest"))
-            .stderr(predicate::str::contains("best logout").not())
             .stderr(predicate::str::contains("sk-the-held-key").not());
     }
 }

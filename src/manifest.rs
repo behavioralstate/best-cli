@@ -51,9 +51,20 @@ pub fn stored_endpoint_problem(endpoint: &str, manifest: Option<&str>) -> Option
     if check_scheme(&url, endpoint).is_err() {
         return Some(format!("{endpoint} is not over https"));
     }
-    let signed_in_at = manifest.and_then(|m| address(m).ok()).map(|m| host_of(&m))?;
+    let signed_in_at = manifest.and_then(stored_host)?;
     (host_of(&url) != signed_in_at)
         .then(|| format!("{endpoint} is on another host than {signed_in_at}, where it signed in"))
+}
+
+/// The host a stored manifest names, whatever its scheme: a scheme it should not have is no reason to stop comparing.
+fn stored_host(manifest: &str) -> Option<String> {
+    let manifest = manifest.trim();
+    let parsed = if manifest.contains("://") {
+        Url::parse(manifest)
+    } else {
+        Url::parse(&format!("https://{manifest}"))
+    };
+    parsed.ok().map(|m| host_of(&m))
 }
 
 fn is_loopback(url: &Url) -> bool {
@@ -310,6 +321,15 @@ mod tests {
             Some("api.example.com/.well-known/best")
         )
         .is_some());
+    }
+
+    #[test]
+    fn a_stored_manifest_on_plain_http_still_names_its_host() {
+        let problem = stored_endpoint_problem(
+            "https://elsewhere.example/api",
+            Some("http://api.example.com/.well-known/best"),
+        );
+        assert!(problem.is_some_and(|p| p.contains("on another host than api.example.com")));
     }
 
     #[test]

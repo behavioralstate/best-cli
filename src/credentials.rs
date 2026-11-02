@@ -1,8 +1,8 @@
 //! The credential store: best-mcp's own file, `~/.best-mcp/credentials.json`, read and written entry for entry so a
 //! person and their agent share sign-ins. One entry per connection name: `tenantId`, `apiKey`, `authType`,
 //! `authHeader`, `issuedAt`, `manifest` (the address signed in at) and `endpoints` (service id → endpoint).
-//! Entries this program did not write, and members it does not know, pass through untouched. The credential is
-//! never printed: it leaves this module only as a request header.
+//! Entries this program did not write, and members it does not know, pass through untouched. The credential leaves
+//! this module only as a request header, and through `best credential` to a pipe.
 
 use std::fmt;
 use std::fs;
