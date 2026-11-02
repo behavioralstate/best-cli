@@ -1153,7 +1153,8 @@ async fn a_stored_endpoint_not_over_https_gets_no_credential() {
             .code(1)
             .stderr(predicate::str::contains("is not over https"))
             .stderr(predicate::str::contains("Nothing was sent"))
-            .stderr(predicate::str::contains("best logout clear"))
+            .stderr(predicate::str::contains("best login clear --manifest"))
+            .stderr(predicate::str::contains("best logout").not())
             .stderr(predicate::str::contains("sk-the-held-key").not());
     }
 }

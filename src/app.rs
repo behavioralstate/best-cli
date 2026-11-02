@@ -109,7 +109,7 @@ async fn connection(ctx: &Ctx, name: &str) -> Result<Connection> {
     if !matches!(entry.auth, Auth::None) {
         if let Some(problem) = manifest::stored_endpoint_problem(&endpoint, entry.manifest.as_deref()) {
             bail!(
-                "'{bare}' holds a service endpoint the credential is not sent to: {problem}. Nothing was sent. `best logout {bare}`, then `best login {bare} --manifest <address>` again."
+                "'{bare}' holds a service endpoint the credential is not sent to: {problem}. Nothing was sent. `best login {bare} --manifest <address>` takes the endpoints the service names now, if they are over https on its own host; if not, the service has to move them."
             );
         }
     }

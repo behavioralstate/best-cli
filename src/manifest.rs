@@ -51,7 +51,7 @@ pub fn stored_endpoint_problem(endpoint: &str, manifest: Option<&str>) -> Option
     if check_scheme(&url, endpoint).is_err() {
         return Some(format!("{endpoint} is not over https"));
     }
-    let signed_in_at = manifest.and_then(|m| Url::parse(m).ok()).map(|m| host_of(&m))?;
+    let signed_in_at = manifest.and_then(|m| address(m).ok()).map(|m| host_of(&m))?;
     (host_of(&url) != signed_in_at)
         .then(|| format!("{endpoint} is on another host than {signed_in_at}, where it signed in"))
 }
@@ -297,6 +297,20 @@ fn urlencode(s: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_stored_manifest_without_a_scheme_still_names_its_host() {
+        let endpoint = "https://localhost:7175/api";
+        assert_eq!(
+            stored_endpoint_problem(endpoint, Some("localhost:7175/.well-known/best")),
+            None
+        );
+        assert!(stored_endpoint_problem(
+            "https://elsewhere.example/api",
+            Some("api.example.com/.well-known/best")
+        )
+        .is_some());
+    }
 
     #[test]
     fn a_bare_host_means_its_well_known_path() {
