@@ -1103,6 +1103,79 @@ async fn a_public_surface_is_signed_in_without_a_credential() {
     );
 }
 
+/// An entry in the store as an older sign-in or another program left it.
+fn store_entry(rig: &Rig, name: &str, manifest: &str, endpoint: &str) {
+    let mut all = rig.credentials();
+    all[name] = json!({
+        "tenantId": TENANT, "apiKey": "sk-the-held-key", "authType": "apikey", "authHeader": "X-Api-Key",
+        "issuedAt": "2026-10-17T10:00:00.000Z", "manifest": manifest, "endpoints": {"com.example.payroll": endpoint}
+    });
+    std::fs::write(rig.credentials_file(), serde_json::to_string_pretty(&all).unwrap()).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_endpoint_not_over_https_gets_no_credential() {
+    let rig = Rig::new().await;
+    store_entry(
+        &rig,
+        "clear",
+        "https://api.example.com/.well-known/best",
+        "http://api.example.com/api/best/tenants/acme",
+    );
+    for args in [
+        &["commands", "clear"][..],
+        &["queries", "clear"][..],
+        &["query", "clear", "get-payslips"][..],
+        &["send", "clear", "submit-expense", "--data", "{}", "--yes"][..],
+        &["events", "clear"][..],
+    ] {
+        rig.run(args)
+            .await
+            .code(1)
+            .stderr(predicate::str::contains("is not over https"))
+            .stderr(predicate::str::contains("Nothing was sent"))
+            .stderr(predicate::str::contains("best logout clear"))
+            .stderr(predicate::str::contains("sk-the-held-key").not());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_endpoint_on_another_host_gets_no_credential() {
+    let rig = Rig::new().await;
+    let elsewhere = format!("{}/api/best/tenants/acme", rig.server.uri());
+    store_entry(&rig, "moved", "https://api.example.com/.well-known/best", &elsewhere);
+    let before = rig.server.received_requests().await.unwrap().len();
+    rig.run(&["commands", "moved"])
+        .await
+        .code(1)
+        .stderr(predicate::str::contains("on another host than api.example.com"))
+        .stderr(predicate::str::contains("Nothing was sent"));
+    assert_eq!(
+        rig.server.received_requests().await.unwrap().len(),
+        before,
+        "nothing reached that host"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_loopback_endpoint_at_its_own_sign_in_is_used() {
+    let rig = Rig::new().await;
+    let base = rig.server.uri();
+    store_entry(
+        &rig,
+        "here",
+        &format!("{base}/.well-known/best"),
+        &format!("{base}/api/best/tenants/acme"),
+    );
+    rig.run(&["commands", "here"]).await;
+    let sent = rig.server.received_requests().await.unwrap();
+    assert!(
+        sent.iter()
+            .any(|r| r.url.path() == "/api/best/tenants/acme/commands" && r.headers.get("x-api-key").is_some()),
+        "the credential went to the endpoint its own sign-in holds"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_name_held_at_a_manifest_now_public_keeps_its_credential() {
     let rig = Rig::new().await;

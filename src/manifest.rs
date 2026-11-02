@@ -41,6 +41,21 @@ fn check_scheme(url: &Url, given: &str) -> Result<()> {
     }
 }
 
+/// Whether a stored endpoint may have the credential: over https (plain http only on this machine's loopback) and on
+/// the host the sign-in resolved to, when the entry names its manifest. A file another program wrote is not trusted
+/// further than a sign-in. Answers what is wrong, in words.
+pub fn stored_endpoint_problem(endpoint: &str, manifest: Option<&str>) -> Option<String> {
+    let Ok(url) = Url::parse(endpoint) else {
+        return Some(format!("{endpoint} is not an address"));
+    };
+    if check_scheme(&url, endpoint).is_err() {
+        return Some(format!("{endpoint} is not over https"));
+    }
+    let signed_in_at = manifest.and_then(|m| Url::parse(m).ok()).map(|m| host_of(&m))?;
+    (host_of(&url) != signed_in_at)
+        .then(|| format!("{endpoint} is on another host than {signed_in_at}, where it signed in"))
+}
+
 fn is_loopback(url: &Url) -> bool {
     match url.host() {
         Some(url::Host::Domain(d)) => d == "localhost" || d.ends_with(".localhost"),

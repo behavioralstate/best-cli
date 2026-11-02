@@ -104,6 +104,13 @@ async fn connection(ctx: &Ctx, name: &str) -> Result<Connection> {
         entry.endpoints = tenant_endpoints(ctx, bare, &entry, tenant).await?;
     }
     let (service, endpoint) = entry.endpoint(service)?;
+    if !matches!(entry.auth, Auth::None) {
+        if let Some(problem) = manifest::stored_endpoint_problem(&endpoint, entry.manifest.as_deref()) {
+            bail!(
+                "'{bare}' holds a service endpoint the credential is not sent to: {problem}. Nothing was sent. `best logout {bare}`, then `best login {bare} --manifest <address>` again."
+            );
+        }
+    }
     Ok(Connection {
         name: bare.to_owned(),
         service,
