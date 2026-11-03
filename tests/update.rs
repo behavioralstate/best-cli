@@ -433,6 +433,11 @@ fn a_cargo_install_build_is_told_how_to_update_and_left_as_it_is() {
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     assert!(stdout(&output).contains("cargo install --git"), "{}", stdout(&output));
     assert!(bytes_of(&rig.exe) == rig.before, "the binary is untouched");
+
+    let output = rig.run(&["nosuch"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("cargo install --git"), "{}", stderr(&output));
+    assert!(!stderr(&output).contains("`best update`"), "{}", stderr(&output));
 }
 
 #[test]

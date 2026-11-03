@@ -154,7 +154,8 @@ no such command; this is best 0.1.2, the newest is 0.3.0: `best update` installs
 ```
 
 It waits at most three seconds for the newest; if it cannot be read in that time it says so and still names
-`best update`. With `--json` the same is one JSON error on stderr, with `running`, `newest` and `update` in its `details`.
+`best update`. A build of cargo's is told the `cargo install` above instead. With `--json` the same is one JSON error on
+stderr, with `running`, `newest` and `update` in its `details`.
 No other command reads a release: nothing checks on the way.
 
 ## The credential file

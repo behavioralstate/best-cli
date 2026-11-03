@@ -477,11 +477,14 @@ async fn update<R: Releases>(releases: &R, check: bool, json: bool) -> Result<()
         let newest = newest(releases, target).await?;
         return say_check(&running, &newest.version, cargo, json);
     }
-    match install(releases, &exe, &running, target, says_version).await? {
+    let outcome = install(releases, &exe, &running, target, says_version).await?;
+    // Text, since a path need not be UTF-8 and the update is done by now.
+    let path = exe.display().to_string();
+    match outcome {
         Outcome::Kept { newest } => {
             if json {
                 return output::json(
-                    &json!({"running": running.text, "newest": newest.text, "updated": false, "path": exe}),
+                    &json!({"running": running.text, "newest": newest.text, "updated": false, "path": path}),
                 );
             }
             if newest == running {
@@ -493,7 +496,7 @@ async fn update<R: Releases>(releases: &R, check: bool, json: bool) -> Result<()
         Outcome::Updated { newest, aside } => {
             if json {
                 return output::json(
-                    &json!({"running": running.text, "newest": newest.text, "updated": true, "path": exe}),
+                    &json!({"running": running.text, "newest": newest.text, "updated": true, "path": path}),
                 );
             }
             say!("Updated best {running} to {newest}: {}", exe.display());
@@ -532,6 +535,7 @@ pub struct UnknownCommand {
     running: String,
     newest: Option<String>,
     behind: bool,
+    update: &'static str,
 }
 
 impl UnknownCommand {
@@ -541,8 +545,10 @@ impl UnknownCommand {
         let running = running()
             .map(|v| v.text)
             .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
+        let cargo = this_binary().is_ok_and(|exe| built_by_cargo(&exe));
+        let update = if cargo { CARGO_UPDATE } else { UPDATE };
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
-            return Self::answer(running, None);
+            return Self::answer(running, None, update);
         };
         let newest = runtime.block_on(async {
             let target = Target::this()?;
@@ -553,10 +559,10 @@ impl UnknownCommand {
             newest_within(&GitHub::new().ok()?, target, LOOKUP_WAIT).await
         });
         runtime.shutdown_background();
-        Self::answer(running, newest)
+        Self::answer(running, newest, update)
     }
 
-    fn answer(running: String, newest: Option<Version>) -> Self {
+    fn answer(running: String, newest: Option<Version>, update: &'static str) -> Self {
         let behind = match (&newest, Version::parse(&running)) {
             (Some(newest), Some(running)) => *newest > running,
             _ => false,
@@ -565,26 +571,27 @@ impl UnknownCommand {
             running,
             newest: newest.map(|v| v.text),
             behind,
+            update,
         }
     }
 
     /// `this is best 0.1.2, the newest is 0.3.0: `best update` installs it`
     pub fn sentence(&self) -> String {
-        let running = &self.running;
+        let (running, update) = (&self.running, self.update);
         match &self.newest {
             Some(newest) if self.behind => {
-                format!("this is best {running}, the newest is {newest}: `{UPDATE}` installs it")
+                format!("this is best {running}, the newest is {newest}: `{update}` installs it")
             }
             Some(newest) => format!(
-                "this is best {running}, the newest is {newest}: `{UPDATE}` would change nothing, `best --help` lists the commands"
+                "this is best {running}, the newest is {newest}: `{update}` would change nothing, `best --help` lists the commands"
             ),
-            None => format!("this is best {running}, the newest could not be read: `{UPDATE}` installs the newest"),
+            None => format!("this is best {running}, the newest could not be read: `{update}` installs the newest"),
         }
     }
 
     /// The same, for `--json`.
     pub fn details(&self) -> serde_json::Value {
-        json!({"running": self.running, "newest": self.newest, "update": UPDATE})
+        json!({"running": self.running, "newest": self.newest, "update": self.update})
     }
 }
 
@@ -915,18 +922,22 @@ mod tests {
 
     #[test]
     fn an_unknown_command_says_the_versions_and_the_way_to_update() {
-        let behind = UnknownCommand::answer("0.1.2".into(), Some(version("0.3.0")));
+        let behind = UnknownCommand::answer("0.1.2".into(), Some(version("0.3.0")), UPDATE);
         assert_eq!(
             behind.sentence(),
             "this is best 0.1.2, the newest is 0.3.0: `best update` installs it"
         );
-        let current = UnknownCommand::answer("0.3.0".into(), Some(version("0.3.0")));
+        let current = UnknownCommand::answer("0.3.0".into(), Some(version("0.3.0")), UPDATE);
         assert!(current.sentence().contains("would change nothing"));
-        let unknown = UnknownCommand::answer("0.1.2".into(), None);
+        let unknown = UnknownCommand::answer("0.1.2".into(), None, UPDATE);
         assert_eq!(
             unknown.sentence(),
             "this is best 0.1.2, the newest could not be read: `best update` installs the newest"
         );
         assert_eq!(unknown.details()["newest"], serde_json::Value::Null);
+        let cargo = UnknownCommand::answer("0.1.2".into(), Some(version("0.3.0")), CARGO_UPDATE);
+        assert!(cargo.sentence().contains(CARGO_UPDATE), "{}", cargo.sentence());
+        assert!(!cargo.sentence().contains(UPDATE), "{}", cargo.sentence());
+        assert_eq!(cargo.details()["update"], CARGO_UPDATE);
     }
 }
