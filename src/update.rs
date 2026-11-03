@@ -94,12 +94,39 @@ impl Releases for Directory {
     }
 }
 
-/// A release's version. A pre-release sorts before its release; build metadata does not count.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+/// A release's version. A pre-release sorts before its release, and two pre-releases of one version sort alike, since
+/// the newest release is never one; build metadata does not count. `text` is only for saying it.
+#[derive(Debug, Clone)]
 struct Version {
     numbers: [u64; 3],
     released: bool,
     text: String,
+}
+
+impl Version {
+    fn rank(&self) -> ([u64; 3], bool) {
+        (self.numbers, self.released)
+    }
+}
+
+impl PartialEq for Version {
+    fn eq(&self, other: &Self) -> bool {
+        self.rank() == other.rank()
+    }
+}
+
+impl Eq for Version {}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Version {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank().cmp(&other.rank())
+    }
 }
 
 impl Version {
@@ -324,8 +351,11 @@ fn remove_old_beside(exe: &Path) {
     };
     for entry in entries.flatten() {
         let file = entry.file_name();
-        let file = file.to_string_lossy();
-        if file.starts_with(&prefix) && file.ends_with(".old") {
+        let middle = file
+            .to_str()
+            .and_then(|f| f.strip_prefix(&prefix))
+            .and_then(|f| f.strip_suffix(".old"));
+        if middle.is_some_and(|m| uuid::Uuid::parse_str(m).is_ok()) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
@@ -446,7 +476,9 @@ async fn update<R: Releases>(releases: &R, check: bool, json: bool) -> Result<()
     match install(releases, &exe, &running, target, says_version).await? {
         Outcome::Kept { newest } => {
             if json {
-                return output::json(&json!({"running": running.text, "newest": newest.text, "updated": false}));
+                return output::json(
+                    &json!({"running": running.text, "newest": newest.text, "updated": false, "path": exe}),
+                );
             }
             if newest == running {
                 say!("best {running} is the newest release; nothing changed.");
@@ -671,7 +703,8 @@ mod tests {
         assert!(version("0.10.0") > version("0.9.9"));
         assert!(version("1.0.0") > version("0.99.99"));
         assert!(version("0.3.0") > version("0.3.0-dev"));
-        assert_eq!(version("0.3.0+abc").numbers, [0, 3, 0]);
+        assert_eq!(version("0.3.0+abc"), version("0.3.0"), "build metadata does not count");
+        assert!(version("0.3.0+b2") <= version("0.3.0"), "so it is nothing to update to");
         assert!(Version::parse("0.3").is_none());
         assert!(Version::parse("0.3.0.1").is_none());
         assert!(Version::parse("latest").is_none());
@@ -730,9 +763,11 @@ mod tests {
         };
         assert_eq!(std::fs::read(&exe).unwrap(), b"the new binary");
         assert_eq!(std::fs::read(&aside).unwrap(), b"the old binary");
-        std::fs::write(dir.path().join("best.notes"), b"someone else's").unwrap();
+        for theirs in ["best.notes", "best.old", "best.0.1.2.old"] {
+            std::fs::write(dir.path().join(theirs), b"someone else's").unwrap();
+        }
         remove_old_beside(&exe);
-        assert_eq!(files_in(&dir), ["best", "best.notes"]);
+        assert_eq!(files_in(&dir), ["best", "best.0.1.2.old", "best.notes", "best.old"]);
     }
 
     #[test]

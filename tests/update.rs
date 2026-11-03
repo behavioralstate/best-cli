@@ -1,5 +1,7 @@
 //! `best update` and an unknown command's error, end to end: a copy of the binary in a temporary install directory, and
-//! a directory standing for the newest release through the seam a debug build reads. No test reads a real release.
+//! a directory standing for the newest release through the seam a debug build reads. No test reads a real release, so
+//! without that seam there are none.
+#![cfg(debug_assertions)]
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -358,6 +360,7 @@ fn update_on_the_newest_says_so_and_changes_nothing() {
     let output = rig.run_as(THIS, &["update", "--json"]);
     let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(answer["updated"], false);
+    assert!(answer["path"].is_string(), "{answer}");
     rig.assert_as_it_was();
 }
 
