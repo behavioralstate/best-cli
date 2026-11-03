@@ -8,6 +8,7 @@ mod output;
 mod signin;
 mod update;
 
+use std::io::Write;
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -32,7 +33,11 @@ mod exit {
 
 fn main() -> ExitCode {
     update::remove_old();
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) if e.kind() == clap::error::ErrorKind::InvalidSubcommand => return unknown_command(e),
+        Err(e) => e.exit(),
+    };
     let json = cli.global.json;
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(r) => r,
@@ -57,6 +62,37 @@ fn main() -> ExitCode {
             ExitCode::from(code)
         }
     }
+}
+
+/// A command this binary does not know: the command-line error as it always was, on stderr with its exit code, and
+/// since an older install is the likely reason, the versions and how to update. Stderr may be gone: that changes nothing.
+fn unknown_command(e: clap::Error) -> ExitCode {
+    let code = u8::try_from(e.exit_code()).unwrap_or(exit::USAGE);
+    let json = wants_json(std::env::args_os().skip(1));
+    if !json {
+        let _ = e.print();
+    }
+    let answer = update::UnknownCommand::look_up();
+    let mut stderr = std::io::stderr();
+    let _ = if json {
+        let rendered = e.render().to_string();
+        let error = rendered
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim_start_matches("error: ");
+        let message = format!("{error}; {}", answer.sentence());
+        let body = json!({ "error": { "code": null, "message": message, "details": answer.details(), "status": null }, "exit": code });
+        writeln!(stderr, "{body}")
+    } else {
+        writeln!(stderr, "\nno such command; {}", answer.sentence())
+    };
+    ExitCode::from(code)
+}
+
+/// `--json` on a command line that did not parse, up to the `--` after which it would be an argument.
+fn wants_json(args: impl Iterator<Item = std::ffi::OsString>) -> bool {
+    args.take_while(|a| a != "--").any(|a| a == "--json")
 }
 
 /// The exit code for an error, with the service's error code and details when it sent them.
@@ -105,4 +141,19 @@ fn is_broken_pipe(e: &anyhow::Error) -> bool {
             || c.downcast_ref::<serde_json::Error>()
                 .is_some_and(|j| j.io_error_kind() == Some(std::io::ErrorKind::BrokenPipe))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    #[test]
+    fn json_on_a_command_line_that_did_not_parse_is_found_up_to_the_separator() {
+        let wants = |args: &[&str]| wants_json(args.iter().map(OsString::from));
+        assert!(wants(&["--json", "nosuch"]));
+        assert!(wants(&["nosuch", "--json"]));
+        assert!(!wants(&["nosuch"]));
+        assert!(!wants(&["nosuch", "--", "--json"]));
+    }
 }

@@ -46,7 +46,7 @@ credential is kept. How work is made and shipped is [SDLC.md](../../SDLC.md); op
   another host are dropped at sign-in, and the tenant manifest must be on the same host.
 - **An update takes what the install scripts take.** Same repository, same assets, same `SHA256SUMS`; nothing is
   touched until the new binary is beside the old one and has said its version. Its client is its own, with no
-  credential, and only `best update` reads a release: no command checks for one on the way. The directory seam is
+  credential, and only `best update` and an unknown command's error read a release: no command checks for one on the way. The directory seam is
   compiled into debug builds only, so a build people run takes its releases from GitHub whatever its environment says.
 - **Tests run without a service.** The fake in `tests/cli.rs` serves the surface; a change to what the binary says is a
   change to a test's assertion in the same commit. The acceptance transcript is remade when the person's path moves.

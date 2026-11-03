@@ -30,7 +30,7 @@
 - A high-impact command (the catalogue's `impact`) is confirmed per submission; `--yes` is the script's answer; without
   a terminal the command is not sent without it.
 - The person approves in their own browser: the link and the code are shown, never opened.
-- `best update` takes what the install scripts take: the same repository, assets and checksums. Only it reads a
+- `best update` takes what the install scripts take: the same repository, assets and checksums. Only it and an unknown command's error read a
   release, never a check on the way of another command, and a failure leaves the install as it was.
 - Instructions, the README and this file state the current rule, not its history; the history is in git.
 - The README's "Try it on your machine" is the person's path, kept true by the change that moves it: a flag, a command,

@@ -3,8 +3,8 @@
 //! checksum of the archive for this machine, so one small file answers both, with no API and no rate limit.
 //!
 //! Nothing is touched until the new binary is written beside the old one and has said its version, so a failed
-//! download or a bad archive leaves the install as it was. No other command reads a release: nothing checks on every
-//! use.
+//! download or a bad archive leaves the install as it was. No command but this one and an unknown command's error reads
+//! a release: nothing checks on every use.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -20,6 +20,8 @@ use crate::say;
 
 const REPOSITORY: &str = "behavioralstate/best-cli";
 const CHECKSUMS: &str = "SHA256SUMS";
+/// How long an unknown command's error waits for the newest version before it says it could not read it.
+const LOOKUP_WAIT: Duration = Duration::from_secs(3);
 /// The one way to update a build `best update` leaves alone.
 const CARGO_UPDATE: &str = "cargo install --git https://github.com/behavioralstate/best-cli --force";
 const UPDATE: &str = "best update";
@@ -488,10 +490,79 @@ fn say_check(running: &Version, newest: &Version, cargo: bool, json: bool) -> Re
     Ok(())
 }
 
+/// What an unknown command's error adds: an older install is the likely reason for a command it does not know.
+#[derive(Debug, PartialEq, Eq)]
+pub struct UnknownCommand {
+    running: String,
+    newest: Option<String>,
+    behind: bool,
+}
+
+impl UnknownCommand {
+    /// The versions, within a short wait. It runs on its own runtime, so a lookup still blocked on the system's name
+    /// resolver cannot hold up the exit, and it fails to nothing worse than not knowing the newest.
+    pub fn look_up() -> Self {
+        let running = running()
+            .map(|v| v.text)
+            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned());
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+            return Self::answer(running, None);
+        };
+        let newest = runtime.block_on(async {
+            let target = Target::this()?;
+            #[cfg(debug_assertions)]
+            if let Some(dir) = std::env::var_os(RELEASES_VAR) {
+                return newest_within(&Directory(dir.into()), target, LOOKUP_WAIT).await;
+            }
+            newest_within(&GitHub::new().ok()?, target, LOOKUP_WAIT).await
+        });
+        runtime.shutdown_background();
+        Self::answer(running, newest)
+    }
+
+    fn answer(running: String, newest: Option<Version>) -> Self {
+        let behind = match (&newest, Version::parse(&running)) {
+            (Some(newest), Some(running)) => *newest > running,
+            _ => false,
+        };
+        Self {
+            running,
+            newest: newest.map(|v| v.text),
+            behind,
+        }
+    }
+
+    /// `this is best 0.1.2, the newest is 0.3.0: `best update` installs it`
+    pub fn sentence(&self) -> String {
+        let running = &self.running;
+        match &self.newest {
+            Some(newest) if self.behind => {
+                format!("this is best {running}, the newest is {newest}: `{UPDATE}` installs it")
+            }
+            Some(newest) => format!(
+                "this is best {running}, the newest is {newest}: `{UPDATE}` would change nothing, `best --help` lists the commands"
+            ),
+            None => format!("this is best {running}, the newest could not be read: `{UPDATE}` installs the newest"),
+        }
+    }
+
+    /// The same, for `--json`.
+    pub fn details(&self) -> serde_json::Value {
+        json!({"running": self.running, "newest": self.newest, "update": UPDATE})
+    }
+}
+
+/// The newest version, or nothing if it is not known within `wait`, whatever the reason.
+async fn newest_within<R: Releases>(releases: &R, target: Target, wait: Duration) -> Option<Version> {
+    let answer = tokio::time::timeout(wait, newest(releases, target)).await;
+    answer.ok()?.ok().map(|newest| newest.version)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::time::Instant;
     use tempfile::TempDir;
 
     const LINUX: &str = "x86_64-unknown-linux-musl";
@@ -780,5 +851,43 @@ mod tests {
         std::fs::remove_file(root.path().join(".crates2.json")).unwrap();
         std::fs::create_dir(bin.join(".fingerprint")).unwrap();
         assert!(built_by_cargo(&exe), "a `cargo build` target directory");
+    }
+
+    #[tokio::test]
+    async fn the_lookup_of_an_unknown_command_gives_up_within_its_wait() {
+        let target = Target::new(LINUX);
+        let hanging = Fake {
+            hangs: true,
+            ..Fake::default()
+        };
+        let started = Instant::now();
+        assert_eq!(newest_within(&hanging, target, Duration::from_millis(50)).await, None);
+        assert!(started.elapsed() < Duration::from_secs(5));
+
+        let failing = Fake::default();
+        assert_eq!(newest_within(&failing, target, LOOKUP_WAIT).await, None);
+
+        let answering = release(target, "0.3.0", b"an archive".to_vec());
+        assert_eq!(
+            newest_within(&answering, target, LOOKUP_WAIT).await,
+            Some(version("0.3.0"))
+        );
+    }
+
+    #[test]
+    fn an_unknown_command_says_the_versions_and_the_way_to_update() {
+        let behind = UnknownCommand::answer("0.1.2".into(), Some(version("0.3.0")));
+        assert_eq!(
+            behind.sentence(),
+            "this is best 0.1.2, the newest is 0.3.0: `best update` installs it"
+        );
+        let current = UnknownCommand::answer("0.3.0".into(), Some(version("0.3.0")));
+        assert!(current.sentence().contains("would change nothing"));
+        let unknown = UnknownCommand::answer("0.1.2".into(), None);
+        assert_eq!(
+            unknown.sentence(),
+            "this is best 0.1.2, the newest could not be read: `best update` installs the newest"
+        );
+        assert_eq!(unknown.details()["newest"], serde_json::Value::Null);
     }
 }

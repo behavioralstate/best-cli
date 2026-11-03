@@ -146,6 +146,17 @@ install`, or a `target` directory) is left as it is, and you are told to run
 `cargo install --git https://github.com/behavioralstate/best-cli --force`. `best update` trusts only the system's
 certificates, whatever `--ca-file` says. Running the install script again also upgrades.
 
+A command this `best` does not know is when an older install finds out. After the usual error, on stderr and with the
+usual exit code 2, it says:
+
+```
+no such command; this is best 0.1.2, the newest is 0.3.0: `best update` installs it
+```
+
+It waits at most three seconds for the newest; if it cannot be read in that time it says so and still names
+`best update`. With `--json` the same is one JSON error on stderr, with `running`, `newest` and `update` in its `details`.
+No other command reads a release: nothing checks on the way.
+
 ## The credential file
 
 `~/.best-mcp/credentials.json` (`BEST_MCP_CREDENTIALS_FILE` moves it, for `best` and best-mcp alike), one entry per

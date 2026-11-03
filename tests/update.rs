@@ -1,4 +1,4 @@
-//! `best update`, end to end: a copy of the binary in a temporary install directory, and
+//! `best update` and an unknown command's error, end to end: a copy of the binary in a temporary install directory, and
 //! a directory standing for the newest release through the seam a debug build reads. No test reads a real release.
 
 use std::io::Write;
@@ -175,6 +175,75 @@ fn help_names_the_way_to_update() {
         assert!(output.status.success());
         assert!(stdout(&output).contains("best update"), "{}", stdout(&output));
     }
+}
+
+#[test]
+fn an_unknown_command_on_an_older_install_says_both_versions_and_how_to_update() {
+    let Some(target) = target() else { return };
+    let rig = Rig::new();
+    rig.publish_sums(target, "abc");
+    let output = rig.run(&["credential-of", "work"]);
+    assert_eq!(output.status.code(), Some(2), "what it always was");
+    assert_eq!(stdout(&output), "", "a pipe sees nothing");
+    let said = stderr(&output);
+    assert!(said.contains("unrecognized subcommand 'credential-of'"), "{said}");
+    assert!(
+        said.contains(&format!(
+            "no such command; this is best {OLDER}, the newest is {THIS}: `best update` installs it"
+        )),
+        "{said}"
+    );
+    rig.assert_as_it_was();
+}
+
+#[test]
+fn an_unknown_command_when_the_newest_cannot_be_read_still_says_how_to_update() {
+    let rig = Rig::new();
+    let output = rig.run(&["credential-of", "work"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(stdout(&output), "");
+    let said = stderr(&output);
+    assert!(said.contains("unrecognized subcommand 'credential-of'"), "{said}");
+    assert!(said.contains("the newest could not be read"), "{said}");
+    assert!(said.contains("`best update`"), "{said}");
+}
+
+#[test]
+fn an_unknown_command_on_the_newest_does_not_send_the_person_to_update() {
+    let Some(target) = target() else { return };
+    let rig = Rig::new();
+    rig.publish_sums(target, "abc");
+    let output = rig.run_as(THIS, &["nosuch"]);
+    assert_eq!(output.status.code(), Some(2));
+    let said = stderr(&output);
+    assert!(said.contains("`best update` would change nothing"), "{said}");
+    assert!(said.contains("`best --help` lists the commands"), "{said}");
+}
+
+#[test]
+fn an_unknown_command_with_json_is_one_json_error_on_stderr() {
+    let Some(target) = target() else { return };
+    let rig = Rig::new();
+    rig.publish_sums(target, "abc");
+    let output = rig.run(&["nosuch", "--json"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(stdout(&output), "");
+    let error: Value = serde_json::from_str(stderr(&output).trim()).expect("one JSON document");
+    assert_eq!(error["exit"], 2);
+    assert_eq!(error["error"]["details"]["running"], OLDER);
+    assert_eq!(error["error"]["details"]["newest"], THIS);
+    assert_eq!(error["error"]["details"]["update"], "best update");
+    let message = error["error"]["message"].as_str().unwrap();
+    assert!(message.contains("unrecognized subcommand 'nosuch'"), "{message}");
+    assert!(message.contains("`best update`"), "{message}");
+}
+
+#[test]
+fn another_command_line_error_reads_no_release_and_is_as_it_was() {
+    let rig = Rig::new();
+    let output = rig.run(&["--no-such-flag"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(!stderr(&output).contains("best update"), "{}", stderr(&output));
 }
 
 #[test]
