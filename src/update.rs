@@ -417,10 +417,14 @@ async fn install<R: Releases>(
     }
     let name = target.archive();
     say!("Downloading {}", releases.address(&name));
+    // In the error's own text, since `--json` prints only that of an `http::Error`.
     let archive = releases
         .asset(&name)
         .await
-        .context("downloading the archive; nothing changed")?;
+        .map_err(|e| match e.downcast::<http::Error>() {
+            Ok(failed) => http::Error::Unreachable(format!("{}; nothing changed", failed.message())).into(),
+            Err(other) => other.context("nothing changed"),
+        })?;
     let actual = sha256(&archive);
     if actual != checksum {
         bail!("the checksum of {name} does not match {CHECKSUMS}; nothing changed");

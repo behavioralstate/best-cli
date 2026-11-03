@@ -373,6 +373,15 @@ fn a_failed_download_leaves_the_install_as_it_was_and_fails_as_unreachable() {
     assert_eq!(output.status.code(), Some(6), "{}", stderr(&output));
     assert!(stderr(&output).contains("nothing changed"), "{}", stderr(&output));
     rig.assert_as_it_was();
+
+    // What it said on the way comes first on stderr, as a sign-in's does; the error is the last line.
+    let output = rig.run(&["update", "--json"]);
+    assert_eq!(output.status.code(), Some(6));
+    let said = stderr(&output);
+    let error: Value = serde_json::from_str(said.lines().last().unwrap()).unwrap();
+    let message = error["error"]["message"].as_str().unwrap();
+    assert!(message.contains("nothing changed"), "{message}");
+    rig.assert_as_it_was();
 }
 
 #[test]
