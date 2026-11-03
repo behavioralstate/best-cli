@@ -290,7 +290,7 @@ impl Http {
     }
 }
 
-fn unreachable_text(e: &reqwest::Error) -> String {
+pub fn unreachable_text(e: &reqwest::Error) -> String {
     let mut text = e.to_string();
     let mut source = std::error::Error::source(e);
     while let Some(s) = source {

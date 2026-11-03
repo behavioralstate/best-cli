@@ -34,6 +34,16 @@ struct Connection {
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
+    // Before the client below: it reads --ca-file, which an update neither uses nor should fail on.
+    if let Command::Update { check } = cli.command {
+        if cli.global.tenant.is_some() {
+            bail!(Usage(
+                "--tenant has no meaning on `best update`, which is about this program and no connection: leave it out. Nothing was done."
+                    .to_owned()
+            ));
+        }
+        return crate::update::run(check, cli.global.json).await;
+    }
     // Said rather than ignored: `--tenant ws logout work` would otherwise forget the one credential that opens every tenant.
     let whole = match cli.command {
         Command::Login(_) => Some("login"),
@@ -71,6 +81,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Watch(args) => watch(&ctx, args).await,
         Command::Workflows { name, id } => workflows(&ctx, &name, id.as_deref()).await,
         Command::Manifest { target } => show_manifest(&ctx, &target).await,
+        Command::Update { .. } => unreachable!("handled above"),
     }
 }
 

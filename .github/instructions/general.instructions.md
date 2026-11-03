@@ -17,7 +17,9 @@ credential is kept. How work is made and shipped is [SDLC.md](../../SDLC.md); op
 | `src/catalogue.rs` | The catalogues and how a name on the command line finds an entry. |
 | `src/http.rs` | Requests with the credential, no redirects, the error classification the exit codes rest on. |
 | `src/output.rs` | stdout for answers, stderr for what is said to the person; tables, JSON, confirmation. |
+| `src/update.rs` | `best update`: the newest release over the running binary, behind the `Releases` seam the tests fake. |
 | `tests/cli.rs` | The binary against a fake of the BEST surface. |
+| `tests/update.rs` | A copy of the binary updating itself from a directory that stands for the newest release. |
 | `acceptance/` | The run against real services, as a transcript. |
 
 ## Rules
@@ -42,6 +44,10 @@ credential is kept. How work is made and shipped is [SDLC.md](../../SDLC.md); op
 - **The person approves in their own browser.** The link and the code are shown; nothing opens them.
 - **A credential goes only to the host its sign-in resolved to**: no redirects on credentialed requests, endpoints on
   another host are dropped at sign-in, and the tenant manifest must be on the same host.
+- **An update takes what the install scripts take.** Same repository, same assets, same `SHA256SUMS`; nothing is
+  touched until the new binary is beside the old one and has said its version. Its client is its own, with no
+  credential, and only `best update` reads a release: no command checks for one on the way. The directory seam is
+  compiled into debug builds only, so a build people run takes its releases from GitHub whatever its environment says.
 - **Tests run without a service.** The fake in `tests/cli.rs` serves the surface; a change to what the binary says is a
   change to a test's assertion in the same commit. The acceptance transcript is remade when the person's path moves.
 - **Documents state rules, never history.** No dated entries, no "done" lists, no issue pointers as the home of a rule.

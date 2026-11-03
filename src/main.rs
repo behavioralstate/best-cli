@@ -6,6 +6,7 @@ mod http;
 mod manifest;
 mod output;
 mod signin;
+mod update;
 
 use std::process::ExitCode;
 
@@ -30,6 +31,7 @@ mod exit {
 }
 
 fn main() -> ExitCode {
+    update::remove_old();
     let cli = Cli::parse();
     let json = cli.global.json;
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {

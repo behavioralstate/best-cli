@@ -30,6 +30,8 @@
 - A high-impact command (the catalogue's `impact`) is confirmed per submission; `--yes` is the script's answer; without
   a terminal the command is not sent without it.
 - The person approves in their own browser: the link and the code are shown, never opened.
+- `best update` takes what the install scripts take: the same repository, assets and checksums. Only it reads a
+  release, never a check on the way of another command, and a failure leaves the install as it was.
 - Instructions, the README and this file state the current rule, not its history; the history is in git.
 - The README's "Try it on your machine" is the person's path, kept true by the change that moves it: a flag, a command,
   what the terminal shows, changes that section in the same commit.
@@ -37,7 +39,7 @@
 ## 3. Build
 
 - Tests first where one applies, against the fake surface in `tests/cli.rs`: the sign-in, the store, the catalogues,
-  the envelope, the refusals, the events.
+  the envelope, the refusals, the events; and against the fake release in `tests/update.rs` and `src/update.rs`.
 - `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`; then the binary against a real service:
   best-peer on the fakes (`BEST_PEER_RUNTIME=fake BEST_PEER_GPU=none`), signed in by the device flow and admitted with
   the real `best-peer approve`, and the local DotQuant BaaS when it runs. `best-validate` validates servers, not
@@ -61,7 +63,7 @@
   the locked tree, builds the binary for Linux x86_64 and aarch64 (musl, static), Windows x86_64 and macOS Apple
   silicon, checks each says the version, and publishes each archive twice, byte for byte the same: under its versioned
   name, for pinning, and under a name without the version that `releases/latest/download` resolves, so the install
-  scripts and the README name no version; with checksums, a build provenance attestation and notes made from the
+  scripts and the README name no version, and `best update` reads the newest version from the two names in the checksums; with checksums, a build provenance attestation and notes made from the
   release commit's message and the commits since the previous release. Before 1.0 the minor goes up with a capability
   and the patch with a fix. A change to the workflow is tried with its `workflow_dispatch`, which builds and keeps the
   archives as run artifacts and publishes nothing, whatever ref it is started from.

@@ -25,13 +25,14 @@ pub struct Global {
     #[arg(long, global = true)]
     pub json: bool,
 
-    /// A PEM file of certificates to trust besides the system's: a service's self-made certificate.
+    /// A PEM file of certificates to trust besides the system's: a service's self-made certificate. `best update`
+    /// trusts only the system's.
     #[arg(long, global = true, env = "BEST_CA_FILE", value_name = "PEM")]
     pub ca_file: Option<PathBuf>,
 
     /// Work on another tenant of the connection's service with the same credential, such as a workspace you are in:
     /// its id, as the service lists it. Read from the manifest the connection signed in at, for this run only. Refused by
-    /// login, logout, connections, credential and manifest, which are about a whole connection.
+    /// login, logout, connections, credential and manifest, which are about a whole connection, and by update.
     #[arg(long, global = true, value_name = "ID")]
     pub tenant: Option<String>,
 }
@@ -119,6 +120,13 @@ pub enum Command {
     Manifest {
         /// A connection name, or a manifest address.
         target: String,
+    },
+
+    /// Install the newest release over this binary: `best update`. `best update --check` only says what it found.
+    Update {
+        /// Change nothing: say the running version and the newest.
+        #[arg(long)]
+        check: bool,
     },
 }
 

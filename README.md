@@ -127,6 +127,25 @@ service's JSON on stdout, and errors as JSON on stderr. Exit codes:
 | 5 | the service refused the request |
 | 6 | the service could not be reached, or failed |
 
+**6. Stay current.** `best update` installs the newest release over the binary you ran, on Linux, macOS and Windows. It
+takes the archive the install scripts take and checks it against the same `SHA256SUMS`:
+
+```
+Downloading https://github.com/behavioralstate/best-cli/releases/latest/download/best-x86_64-unknown-linux-musl.tar.gz
+Updated best 0.1.2 to 0.3.0: /home/ada/.local/bin/best
+```
+
+`best update --check` changes nothing and says the running version and the newest, on stdout. With `--json`, `--check`
+answers `{"running", "newest", "updateAvailable", "update"}` and `best update` answers
+`{"running", "newest", "updated", "path"}`. When the newest cannot be read the exit code is 6; any other failure is 1.
+
+Already on the newest, it says so and changes nothing. The old binary stays until the new one is written beside it and
+has said its version, so a failed download or a bad archive leaves the install as it was. On Windows, where a running
+binary cannot be overwritten, the old one is moved aside and a later run of `best` removes it. A build of cargo's (`cargo
+install`, or a `target` directory) is left as it is, and you are told to run
+`cargo install --git https://github.com/behavioralstate/best-cli --force`. `best update` trusts only the system's
+certificates, whatever `--ca-file` says. Running the install script again also upgrades.
+
 ## The credential file
 
 `~/.best-mcp/credentials.json` (`BEST_MCP_CREDENTIALS_FILE` moves it, for `best` and best-mcp alike), one entry per
@@ -143,6 +162,6 @@ cargo build && cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-The tests run the binary against a fake of the BEST surface ([tests/cli.rs](tests/cli.rs)) and need no service. The
-run against real ones, best-peer and the DotQuant BaaS, is kept as
+The tests run the binary against a fake of the BEST surface ([tests/cli.rs](tests/cli.rs)) and a directory standing for
+the newest release ([tests/update.rs](tests/update.rs)), and need no service and no release. The run against real ones, best-peer and the DotQuant BaaS, is kept as
 [acceptance/best-peer-and-dotquant.md](acceptance/best-peer-and-dotquant.md).
